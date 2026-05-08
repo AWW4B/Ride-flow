@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # Python FastAPI Backend
+  backend:
+    build: ./backend
+    container_name: rideflow_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_USER=rf_admin
+      - DB_PASSWORD=your_password
+      - DB_NAME=rideflow
+      - JWT_SECRET=local_development_secret_only
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Next.js Frontend
+  frontend:
+    build: ./frontend
+    container_name: rideflow_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+    depends_on:
+      - backend
+
+  # MySQL Database (Local Dev)
+  db:
+    image: mysql:8.0
+    container_name: rideflow_db
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=rideflow
+    volumes:
+      - ./backend/sql:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
