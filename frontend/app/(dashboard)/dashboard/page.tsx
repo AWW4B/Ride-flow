@@ -57,7 +57,7 @@ export default function DashboardPage() {
                 <YAxis tick={{ fill:'#4A4845', fontSize:10 }} tickLine={false} axisLine={false} tickFormatter={v => `₨${v}`} />
                 <Tooltip
                   contentStyle={{ background:'#1E1E1E', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#F0EDE6', fontSize:12 }}
-                  formatter={(v: number) => [`₨${v.toLocaleString()}`, 'Revenue']}
+                  formatter={(v: any) => [`₨${Number(v ?? 0).toLocaleString()}`, 'Revenue']}
                 />
                 <Line type="monotone" dataKey="revenue" stroke="#C4A96D" strokeWidth={2} dot={false} activeDot={{ r:4, fill:'#C4A96D' }} />
               </LineChart>
@@ -74,7 +74,7 @@ export default function DashboardPage() {
                 <Pie data={paymentMethodData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={3} dataKey="value">
                   {paymentMethodData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                 </Pie>
-                <Tooltip contentStyle={{ background:'#1E1E1E', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#F0EDE6', fontSize:12 }} formatter={(v: number) => [`${v}%`, '']} />
+                <Tooltip contentStyle={{ background:'#1E1E1E', border:'1px solid rgba(255,255,255,0.07)', borderRadius:6, color:'#F0EDE6', fontSize:12 }} formatter={(v: any) => [`${v}%`, '']} />
               </PieChart>
             </ResponsiveContainer>
           </div>
