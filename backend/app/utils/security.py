@@ -1,35 +1,48 @@
-from passlib.context import CryptContext
-# ============================================================
-# app/utils/security.py — JWT and Password Hashing
-# ============================================================
-# TODO 1: Setup Passlib for password hashing.
-# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-# 
-# def verify_password(plain_password, hashed_password):
-#     return pwd_context.verify(plain_password, hashed_password)
-# 
-# def get_password_hash(password):
-#     return pwd_context.hash(password)
-#
-# TODO 2: Implement JWT Token generation.
-# from jose import jwt
-# from datetime import datetime, timedelta
-# from app.config import settings
-#
-# def create_access_token(data: dict):
-#     to_encode = data.copy()
-#     expire = datetime.utcnow() + timedelta(minutes=settings.JWT_EXPIRES_MINUTES)
-#     to_encode.update({"exp": expire})
-#     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm="HS256")
-#     return encoded_jwt
-#
-# TODO 3: Implement get_current_user dependency for FastAPI.
-# This will extract the token from the Authorization header and verify it.
-# from fastapi import Depends, HTTPException, status
-# from fastapi.security import OAuth2PasswordBearer
-# 
-# oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
-#
-# async def get_current_user(token: str = Depends(oauth2_scheme)):
-#     # decode token, fetch user from DB using app.database, return user dict
-#     pass
+from datetime import datetime, timedelta
+from typing import Optional
+import bcrypt
+from jose import jwt, JWTError
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from app.config import settings
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
+# ── Password ──────────────────────────────────────────────────────────────────
+
+def hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+# ── JWT ───────────────────────────────────────────────────────────────────────
+
+def create_token(user_id: int, role: str, email: str) -> str:
+    expire = datetime.utcnow() + timedelta(minutes=settings.JWT_EXPIRES_MINUTES)
+    payload = {"sub": str(user_id), "role": role, "email": email, "exp": expire}
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")
+
+
+def decode_token(token: str) -> dict:
+    try:
+        return jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+    return decode_token(token)
+
+
+def require_role(*roles: str):
+    async def _check(user: dict = Depends(get_current_user)):
+        if user.get("role") not in roles:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return user
+    return _check

@@ -1,23 +1,24 @@
+import os
 from pydantic_settings import BaseSettings
 
-# ============================================================
-# app/config.py — Environment Variables
-# ============================================================
-# TODO 1: Define your environment variables here.
-# Pydantic will automatically load them from the .env file.
-# 
-# Example:
-# class Settings(BaseSettings):
-#     DB_HOST: str = "localhost"
-#     DB_PORT: int = 3306
-#     DB_USER: str = "rf_admin"
-#     DB_PASSWORD: str
-#     DB_NAME: str = "rideflow"
-#     
-#     JWT_SECRET: str
-#     JWT_EXPIRES_MINUTES: int = 60 * 24 * 7 # 7 days
-#
-#     class Config:
-#         env_file = ".env"
-#
-# settings = Settings()
+
+class Settings(BaseSettings):
+    DB_HOST: str
+    DB_PORT: int = 3306
+    DB_USER: str
+    DB_PASSWORD: str
+    DB_NAME: str = "rideflow"
+    DB_CA: str = ""          # Path to TiDB/Aiven CA cert; empty = no SSL
+
+    JWT_SECRET: str
+    JWT_EXPIRES_MINUTES: int = 60 * 24  # 24 hours
+
+    ADMIN_USERNAME: str = "admin@rideflow.com"
+    ADMIN_PASSWORD: str = "admin123"
+
+    class Config:
+        env_file = ".env"
+        extra = "ignore"
+
+
+settings = Settings()

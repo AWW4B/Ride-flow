@@ -1,34 +1,89 @@
 'use client';
-import { useState } from 'react';
-import { mockDrivers } from '@/utils/mockData';
-import { getVerificationBadge, getAvailabilityBadge } from '@/utils/helpers';
+import { useState, useEffect } from 'react';
+import { api } from '@/utils/api';
 
-const CITIES = ['All', 'Islamabad', 'Lahore', 'Karachi'];
+const CITIES = ['All'];
+const VERIF  = ['All', 'verified', 'pending', 'rejected'];
 
 export default function DriversPage() {
-  const [tab, setTab] = useState<'list' | 'leaderboard'>('list');
-  const [city, setCity] = useState('All');
-  const [verif, setVerif] = useState('All');
-  const [search, setSearch] = useState('');
+  const [drivers,    setDrivers]    = useState<any[]>([]);
+  const [leaderboard,setLeaderboard]= useState<any[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [tab,        setTab]        = useState<'list' | 'leaderboard'>('list');
+  const [city,       setCity]       = useState('All');
+  const [verif,      setVerif]      = useState('All');
+  const [search,     setSearch]     = useState('');
+  const [actionId,   setActionId]   = useState<number | null>(null);
 
-  const filtered = mockDrivers.filter(d => {
-    const matchCity = city === 'All' || d.city === city;
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [d, lb] = await Promise.all([
+        api.admin.getDrivers(),
+        api.admin.getLeaderboard(),
+      ]);
+      setDrivers(d);
+      setLeaderboard(lb);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  // Build city filter options from live data
+  const cities = ['All', ...Array.from(new Set(drivers.map(d => d.city).filter(Boolean)))];
+
+  const filtered = drivers.filter(d => {
+    const matchCity  = city  === 'All' || d.city === city;
     const matchVerif = verif === 'All' || d.verification_status === verif;
     const q = search.toLowerCase();
-    const matchSearch = !q || d.full_name.toLowerCase().includes(q) || d.email.toLowerCase().includes(q) || d.city.toLowerCase().includes(q);
+    const matchSearch = !q
+      || d.full_name?.toLowerCase().includes(q)
+      || d.email?.toLowerCase().includes(q)
+      || d.city?.toLowerCase().includes(q)
+      || d.license_number?.toLowerCase().includes(q);
     return matchCity && matchVerif && matchSearch;
   });
 
-  const leaderboard = [...mockDrivers]
-    .filter(d => d.verification_status === 'verified')
-    .sort((a, b) => b.avg_rating - a.avg_rating || b.trips_completed - a.trips_completed);
+  const handleVerify = async (driverId: number, status: 'verified' | 'rejected') => {
+    setActionId(driverId);
+    try {
+      await api.admin.verifyDriver(driverId, status);
+      await load();
+    } catch (e: any) { alert(e.message); }
+    finally { setActionId(null); }
+  };
 
-  const byCity = CITIES.slice(1).map(c => ({
-    city: c,
-    drivers: leaderboard.filter(d => d.city === c),
-  }));
+  const handleUserStatus = async (userId: number, status: string) => {
+    try {
+      await api.admin.updateUserStatus(userId, status);
+      await load();
+    } catch (e: any) { alert(e.message); }
+  };
 
-  const rankColors = ['var(--accent)', '#A8A8A8', '#CD7F32'];
+  const verifBadge = (v: string) => {
+    const map: Record<string,string> = { verified:'success', pending:'warn', rejected:'error' };
+    return <span className={`badge badge-${map[v] ?? 'muted'}`} style={{ textTransform:'capitalize', fontSize:11 }}>{v}</span>;
+  };
+
+  const availBadge = (a: string) => {
+    const map: Record<string,string> = { online:'success', on_trip:'accent', offline:'muted' };
+    return <span className={`badge badge-${map[a] ?? 'muted'}`} style={{ textTransform:'capitalize', fontSize:11 }}>{a?.replace('_',' ')}</span>;
+  };
+
+  const online    = drivers.filter(d => d.availability === 'online').length;
+  const onTrip    = drivers.filter(d => d.availability === 'on_trip').length;
+  const pending   = drivers.filter(d => d.verification_status === 'pending').length;
+  const verified  = drivers.filter(d => d.verification_status === 'verified').length;
+  const avgRating = drivers.filter(d => d.avg_rating > 0).reduce((s, d) => s + Number(d.avg_rating), 0)
+                  / (drivers.filter(d => d.avg_rating > 0).length || 1);
+  const totalTrips = drivers.reduce((s, d) => s + (d.trips_completed ?? 0), 0);
+
+  // Group leaderboard by city
+  const lbCities = Array.from(new Set(leaderboard.map(d => d.city).filter(Boolean)));
+  const lbByCity = lbCities.map(c => ({ city: c, drivers: leaderboard.filter(d => d.city === c) }));
+
+  const rankIcon = (i: number) => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}`;
 
   return (
     <div>
@@ -38,9 +93,9 @@ export default function DriversPage() {
           <div className="page-subtitle">Driver management, verification & leaderboard</div>
         </div>
         <div style={{ display:'flex', gap:8 }}>
-          <span className="badge badge-success" style={{ padding:'6px 12px' }}>{mockDrivers.filter(d=>d.availability==='online').length} Online</span>
-          <span className="badge badge-accent" style={{ padding:'6px 12px' }}>{mockDrivers.filter(d=>d.availability==='on_trip').length} On Trip</span>
-          <span className="badge badge-warn" style={{ padding:'6px 12px' }}>{mockDrivers.filter(d=>d.verification_status==='pending').length} Pending</span>
+          <span className="badge badge-success" style={{ padding:'6px 12px' }}>{online} Online</span>
+          <span className="badge badge-accent"  style={{ padding:'6px 12px' }}>{onTrip} On Trip</span>
+          <span className="badge badge-warn"    style={{ padding:'6px 12px' }}>{pending} Pending</span>
         </div>
       </div>
 
@@ -49,116 +104,132 @@ export default function DriversPage() {
         <div className="stat-card">
           <span className="stat-icon">👨‍💼</span>
           <div className="stat-label">Total Drivers</div>
-          <div className="stat-value">{mockDrivers.length}</div>
-          <div className="stat-meta">{mockDrivers.filter(d=>d.verification_status==='verified').length} verified</div>
+          <div className="stat-value">{drivers.length}</div>
+          <div className="stat-meta">{verified} verified</div>
         </div>
         <div className="stat-card">
           <span className="stat-icon">✅</span>
-          <div className="stat-label">Active Online</div>
-          <div className="stat-value accent">{mockDrivers.filter(d=>d.availability!=='offline').length}</div>
-          <div className="stat-meta">taking rides now</div>
+          <div className="stat-label">Active Now</div>
+          <div className="stat-value accent">{online + onTrip}</div>
+          <div className="stat-meta">online or on trip</div>
         </div>
         <div className="stat-card">
           <span className="stat-icon">⭐</span>
-          <div className="stat-label">Platform Avg Rating</div>
-          <div className="stat-value">
-            {(mockDrivers.filter(d=>d.avg_rating>0).reduce((s,d)=>s+d.avg_rating,0)/mockDrivers.filter(d=>d.avg_rating>0).length).toFixed(2)}
-          </div>
-          <div className="stat-meta">across verified drivers</div>
+          <div className="stat-label">Avg Rating</div>
+          <div className="stat-value">{drivers.length > 0 ? avgRating.toFixed(2) : '—'}</div>
+          <div className="stat-meta">across active drivers</div>
         </div>
         <div className="stat-card">
           <span className="stat-icon">🏁</span>
           <div className="stat-label">Total Trips</div>
-          <div className="stat-value">{mockDrivers.reduce((s,d)=>s+d.trips_completed,0)}</div>
+          <div className="stat-value">{totalTrips.toLocaleString()}</div>
           <div className="stat-meta">all time</div>
         </div>
       </div>
 
       <div className="tabs">
-        <div className={`tab${tab==='list'?' active':''}`} onClick={()=>setTab('list')}>Driver List</div>
-        <div className={`tab${tab==='leaderboard'?' active':''}`} onClick={()=>setTab('leaderboard')}>Leaderboard by City</div>
+        <div className={`tab${tab==='list'?' active':''}`}         onClick={() => setTab('list')}>Driver List</div>
+        <div className={`tab${tab==='leaderboard'?' active':''}`}  onClick={() => setTab('leaderboard')}>Leaderboard by City</div>
       </div>
 
       {tab === 'list' && (
         <div className="card">
           <div className="filter-bar">
-            <input className="input" placeholder="Search name, city…" value={search} onChange={e=>setSearch(e.target.value)} />
-            <select className="input" value={city} onChange={e=>setCity(e.target.value)}>
-              {CITIES.map(c=><option key={c}>{c}</option>)}
+            <input className="input" placeholder="Search name, email, city, licence…"
+              value={search} onChange={e => setSearch(e.target.value)} style={{ maxWidth:260 }} />
+            <select className="input" value={city} onChange={e => setCity(e.target.value)}>
+              {cities.map(c => <option key={c}>{c}</option>)}
             </select>
-            <select className="input" value={verif} onChange={e=>setVerif(e.target.value)}>
-              <option value="All">All Status</option>
-              <option value="verified">Verified</option>
-              <option value="pending">Pending</option>
-              <option value="rejected">Rejected</option>
+            <select className="input" value={verif} onChange={e => setVerif(e.target.value)}>
+              {VERIF.map(v => <option key={v} value={v}>{v === 'All' ? 'All Status' : v.charAt(0).toUpperCase() + v.slice(1)}</option>)}
             </select>
-            <button className="btn btn-primary btn-sm">+ Add Driver</button>
           </div>
+
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr><th>#</th><th>Driver</th><th>City</th><th>Vehicle</th><th>Type</th><th>Rating</th><th>Trips</th><th>Wallet</th><th>Status</th><th>Availability</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {filtered.map(d => (
-                  <tr key={d.driver_id}>
-                    <td className="mono">D-{d.driver_id}</td>
-                    <td>
-                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                        <div className="avatar gold">{d.full_name[0]}</div>
-                        <div>
-                          <div style={{ fontWeight:500, fontSize:13 }}>{d.full_name}</div>
-                          <div style={{ fontSize:11, color:'var(--text-m)' }}>{d.email}</div>
+            {loading ? (
+              <div style={{ textAlign:'center', padding:40, color:'var(--text-m)' }}>Loading drivers…</div>
+            ) : filtered.length === 0 ? (
+              <div className="empty-state"><div className="empty-icon">🚗</div><p>No drivers match your filters.</p></div>
+            ) : (
+              <table>
+                <thead>
+                  <tr><th>#</th><th>Driver</th><th>City</th><th>Licence</th><th>Rating</th><th>Trips</th><th>Wallet</th><th>Verified</th><th>Avail.</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {filtered.map(d => (
+                    <tr key={d.driver_id}>
+                      <td className="mono">D-{d.driver_id}</td>
+                      <td>
+                        <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                          <div className="avatar gold">{d.full_name?.[0] ?? '?'}</div>
+                          <div>
+                            <div style={{ fontWeight:500, fontSize:13 }}>{d.full_name}</div>
+                            <div style={{ fontSize:11, color:'var(--text-m)' }}>{d.email}</div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="muted">{d.city}</td>
-                    <td className="muted">{d.vehicle}</td>
-                    <td><span className="badge badge-muted" style={{ textTransform:'capitalize' }}>{d.vehicle_type}</span></td>
-                    <td>
-                      {d.avg_rating > 0
-                        ? <span style={{ color:'var(--accent)', fontWeight:500 }}>★ {d.avg_rating.toFixed(2)}</span>
-                        : <span style={{ color:'var(--text-m)' }}>—</span>}
-                    </td>
-                    <td className="muted">{d.trips_completed}</td>
-                    <td style={{ color:'var(--success-fg)', fontWeight:500 }}>₨{d.wallet_balance.toFixed(2)}</td>
-                    <td>{getVerificationBadge(d.verification_status)}</td>
-                    <td>{getAvailabilityBadge(d.availability)}</td>
-                    <td>
-                      <div style={{ display:'flex', gap:4 }}>
-                        <button className="btn btn-ghost btn-sm">View</button>
-                        {d.verification_status === 'pending' && <button className="btn btn-primary btn-sm">Verify</button>}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      </td>
+                      <td className="muted">{d.city ?? '—'}</td>
+                      <td className="mono" style={{ fontSize:11 }}>{d.license_number}</td>
+                      <td>
+                        {d.avg_rating > 0
+                          ? <span style={{ color:'var(--accent)', fontWeight:500 }}>★ {Number(d.avg_rating).toFixed(2)}</span>
+                          : <span style={{ color:'var(--text-m)' }}>—</span>}
+                      </td>
+                      <td className="muted">{d.trips_completed ?? 0}</td>
+                      <td style={{ color:'var(--success-fg)', fontWeight:500 }}>₨{Number(d.wallet_balance ?? 0).toFixed(2)}</td>
+                      <td>{verifBadge(d.verification_status)}</td>
+                      <td>{availBadge(d.availability)}</td>
+                      <td>
+                        <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+                          {d.verification_status === 'pending' && (
+                            <>
+                              <button className="btn btn-primary btn-sm" disabled={actionId === d.driver_id}
+                                onClick={() => handleVerify(d.driver_id, 'verified')}>Verify</button>
+                              <button className="btn btn-ghost btn-sm" style={{ color:'var(--danger)' }}
+                                disabled={actionId === d.driver_id}
+                                onClick={() => handleVerify(d.driver_id, 'rejected')}>Reject</button>
+                            </>
+                          )}
+                          {d.account_status === 'active'
+                            ? <button className="btn btn-ghost btn-sm" style={{ color:'var(--danger)' }}
+                                onClick={() => handleUserStatus(d.user_id, 'suspended')}>Suspend</button>
+                            : <button className="btn btn-ghost btn-sm"
+                                onClick={() => handleUserStatus(d.user_id, 'active')}>Restore</button>
+                          }
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
 
       {tab === 'leaderboard' && (
         <div className="grid-3">
-          {byCity.map(({ city: c, drivers }) => (
+          {lbByCity.length === 0 && !loading && (
+            <div className="card" style={{ gridColumn:'1/-1' }}>
+              <div className="empty-state"><div className="empty-icon">🏆</div><p>No leaderboard data yet. Drivers need completed trips.</p></div>
+            </div>
+          )}
+          {lbByCity.map(({ city: c, drivers: drs }) => (
             <div key={c} className="card">
               <div className="card-title">🏆 {c}</div>
-              {drivers.length === 0 && <div style={{ color:'var(--text-m)', fontSize:12, padding:'12px 0' }}>No verified drivers in this city.</div>}
-              {drivers.map((d, i) => (
+              {drs.map((d: any, i: number) => (
                 <div key={d.driver_id} className="metric-row" style={{ alignItems:'center', gap:8 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                    <span style={{ fontSize:14, fontWeight:700, color: rankColors[i] ?? 'var(--text-s)', width:20, textAlign:'center' }}>
-                      {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i+1}
-                    </span>
-                    <div className="avatar gold">{d.full_name[0]}</div>
+                    <span style={{ fontSize:14, fontWeight:700, width:22, textAlign:'center' }}>{rankIcon(i)}</span>
+                    <div className="avatar gold">{d.full_name?.[0] ?? '?'}</div>
                     <div>
                       <div style={{ fontSize:13, fontWeight:500 }}>{d.full_name}</div>
-                      <div style={{ fontSize:11, color:'var(--text-m)' }}>{d.trips_completed} trips · {d.vehicle}</div>
+                      <div style={{ fontSize:11, color:'var(--text-m)' }}>{d.trips_completed} trips</div>
                     </div>
                   </div>
                   <div style={{ textAlign:'right' }}>
-                    <div style={{ color:'var(--accent)', fontWeight:600, fontSize:14 }}>★ {d.avg_rating.toFixed(2)}</div>
-                    {getAvailabilityBadge(d.availability)}
+                    <div style={{ color:'var(--accent)', fontWeight:600, fontSize:14 }}>★ {Number(d.avg_rating).toFixed(2)}</div>
+                    {availBadge(d.availability)}
                   </div>
                 </div>
               ))}

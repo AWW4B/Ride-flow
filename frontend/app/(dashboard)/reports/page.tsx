@@ -1,67 +1,89 @@
 'use client';
-import { useState } from 'react';
-import { mockPayments, mockRides, mockDrivers } from '@/utils/mockData';
-import { formatCurrency, formatDate } from '@/utils/helpers';
+import { useState, useEffect } from 'react';
+import { api } from '@/utils/api';
+
+function downloadCSV(data: any[], filename: string) {
+  if (!data.length) return;
+  const headers = Object.keys(data[0]);
+  const rows    = data.map(r => headers.map(h => `"${r[h] ?? ''}"`).join(','));
+  const csv     = [headers.join(','), ...rows].join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
+  a.download = `${filename}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
 
 export default function ReportsPage() {
-  const [downloading, setDownloading] = useState<string | null>(null);
+  const today   = new Date().toISOString().slice(0,10);
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0,10);
 
-  // Mock Report Data (in real app, this would be fetched from /api/v1/admin/reports/...)
-  const revenueReport = [
-    { date: '2026-05-01', rides: 42, gross: 42000, commission: 8400, net: 33600 },
-    { date: '2026-05-02', rides: 38, gross: 38500, commission: 7700, net: 30800 },
-    { date: '2026-05-03', rides: 55, gross: 61000, commission: 12200, net: 48800 },
-  ];
+  const [dateFrom,  setDateFrom]  = useState(weekAgo);
+  const [dateTo,    setDateTo]    = useState(today);
+  const [revenue,   setRevenue]   = useState<any[]>([]);
+  const [drivers,   setDrivers]   = useState<any[]>([]);
+  const [payments,  setPayments]  = useState<any[]>([]);
+  const [refunds,   setRefunds]   = useState<any[]>([]);
+  const [loading,   setLoading]   = useState(true);
 
-  const driverReport = mockDrivers.map(d => ({
-    name: d.full_name,
-    trips: d.trips_completed,
-    gross: d.trips_completed * 450,
-    commission: (d.trips_completed * 450) * 0.2,
-    net: (d.trips_completed * 450) * 0.8
-  }));
-
-  const paymentReport = [
-    { method: 'Cash', count: 120, total: 45000 },
-    { method: 'Wallet', count: 85, total: 32000 },
-    { method: 'Card', count: 45, total: 28000 },
-  ];
-
-  const refundReport = mockPayments.filter(p => p.payment_status === 'refunded').map(p => ({
-    id: p.payment_id,
-    ride: p.ride_id,
-    amount: p.amount,
-    date: p.transaction_date
-  }));
-
-  const downloadCSV = (data: any[], filename: string) => {
-    setDownloading(filename);
-    setTimeout(() => {
-      const csvRows = [];
-      const headers = Object.keys(data[0]);
-      csvRows.push(headers.join(','));
-
-      for (const row of data) {
-        const values = headers.map(header => {
-          const val = row[header];
-          return `"${val}"`;
-        });
-        csvRows.push(values.join(','));
-      }
-
-      const csvContent = csvRows.join('\n');
-      const blob = new Blob([csvContent], { type: 'text/csv' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.setAttribute('hidden', '');
-      a.setAttribute('href', url);
-      a.setAttribute('download', `${filename}.csv`);
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setDownloading(null);
-    }, 500);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [rev, drv, pay, ref] = await Promise.all([
+        api.admin.getRevenue(dateFrom, dateTo),
+        api.admin.getDriverReport(),
+        api.admin.getPaymentReport(),
+        api.admin.getRefunds(),
+      ]);
+      setRevenue(rev);
+      setDrivers(drv);
+      setPayments(pay);
+      setRefunds(ref);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(() => { load(); }, [dateFrom, dateTo]);
+
+  const ReportCard = ({ title, sub, data, filename, cols }: { title:string; sub:string; data:any[]; filename:string; cols:{key:string; label:string; fmt?:(v:any)=>string}[] }) => (
+    <div className="card">
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
+        <div>
+          <div className="card-title" style={{ marginBottom:4 }}>{title}</div>
+          <div style={{ fontSize:12, color:'var(--text-m)' }}>{sub}</div>
+        </div>
+        <button className="btn btn-sm btn-ghost" onClick={() => downloadCSV(data, filename)} disabled={data.length === 0}>
+          ⬇ CSV
+        </button>
+      </div>
+      <div className="table-wrap">
+        {loading ? (
+          <div style={{ textAlign:'center', padding:24, color:'var(--text-m)' }}>Loading…</div>
+        ) : data.length === 0 ? (
+          <div className="empty-state"><div className="empty-icon">📄</div><p>No data for this period</p></div>
+        ) : (
+          <table>
+            <thead><tr>{cols.map(c => <th key={c.key}>{c.label}</th>)}</tr></thead>
+            <tbody>
+              {data.map((row, i) => (
+                <tr key={i}>
+                  {cols.map(c => (
+                    <td key={c.key} className="muted" style={{ fontVariantNumeric:'tabular-nums' }}>
+                      {c.fmt ? c.fmt(row[c.key]) : (row[c.key] ?? '—')}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+
+  const fmt = (v: any) => `₨${Number(v ?? 0).toLocaleString()}`;
 
   return (
     <div>
@@ -71,131 +93,61 @@ export default function ReportsPage() {
           <div className="page-subtitle">Platform revenue and driver settlement summaries</div>
         </div>
         <div style={{ display:'flex', gap:8 }}>
-           <input type="date" className="btn btn-ghost" defaultValue="2026-05-01" style={{ fontSize:12 }} />
-           <input type="date" className="btn btn-ghost" defaultValue="2026-05-08" style={{ fontSize:12 }} />
+          <input type="date" className="btn btn-ghost" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ fontSize:12 }} />
+          <input type="date" className="btn btn-ghost" value={dateTo}   onChange={e => setDateTo(e.target.value)}   style={{ fontSize:12 }} />
         </div>
       </div>
 
       <div className="grid-2">
-        {/* Revenue Report */}
-        <div className="card">
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
-            <div>
-              <div className="card-title" style={{ marginBottom:4 }}>Daily Revenue Summary</div>
-              <div style={{ fontSize:12, color:'var(--text-m)' }}>Daily totals for gross, commission, and payouts</div>
-            </div>
-            <button className="btn btn-sm btn-ghost" onClick={() => downloadCSV(revenueReport, 'daily_revenue')}>
-              {downloading === 'daily_revenue' ? '...' : 'Download CSV'}
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Date</th><th>Rides</th><th>Gross</th><th>Comm (20%)</th><th>Net</th></tr>
-              </thead>
-              <tbody>
-                {revenueReport.map(r => (
-                  <tr key={r.date}>
-                    <td className="mono">{r.date}</td>
-                    <td>{r.rides}</td>
-                    <td className="metric-val">₨{r.gross.toLocaleString()}</td>
-                    <td className="muted">₨{r.commission.toLocaleString()}</td>
-                    <td className="accent">₨{r.net.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Driver Earnings */}
-        <div className="card">
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
-            <div>
-              <div className="card-title" style={{ marginBottom:4 }}>Driver Settlements</div>
-              <div style={{ fontSize:12, color:'var(--text-m)' }}>Trips and net earnings per driver</div>
-            </div>
-            <button className="btn btn-sm btn-ghost" onClick={() => downloadCSV(driverReport, 'driver_settlements')}>
-              {downloading === 'driver_settlements' ? '...' : 'Download CSV'}
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Driver</th><th>Trips</th><th>Gross</th><th>Net Earning</th></tr>
-              </thead>
-              <tbody>
-                {driverReport.slice(0,4).map(r => (
-                  <tr key={r.name}>
-                    <td style={{ fontWeight:500 }}>{r.name}</td>
-                    <td>{r.trips}</td>
-                    <td className="muted">₨{r.gross.toLocaleString()}</td>
-                    <td className="accent">₨{r.net.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Payment Methods */}
-        <div className="card">
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
-            <div>
-              <div className="card-title" style={{ marginBottom:4 }}>Payment Method Breakdown</div>
-              <div style={{ fontSize:12, color:'var(--text-m)' }}>Usage distribution across payment types</div>
-            </div>
-            <button className="btn btn-sm btn-ghost" onClick={() => downloadCSV(paymentReport, 'payment_methods')}>
-              {downloading === 'payment_methods' ? '...' : 'Download CSV'}
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Method</th><th>Count</th><th>Total Vol</th></tr>
-              </thead>
-              <tbody>
-                {paymentReport.map(r => (
-                  <tr key={r.method}>
-                    <td>{r.method}</td>
-                    <td>{r.count}</td>
-                    <td className="metric-val accent">₨{r.total.toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Refunds */}
-        <div className="card">
-          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
-            <div>
-              <div className="card-title" style={{ marginBottom:4 }}>Refunds & Disputes</div>
-              <div style={{ fontSize:12, color:'var(--text-m)' }}>List of reversed transactions</div>
-            </div>
-            <button className="btn btn-sm btn-ghost" onClick={() => downloadCSV(refundReport, 'refunds')}>
-              {downloading === 'refunds' ? '...' : 'Download CSV'}
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Ride #</th><th>Amount</th><th>Reason</th><th>Date</th></tr>
-              </thead>
-              <tbody>
-                {refundReport.map(r => (
-                  <tr key={r.id}>
-                    <td className="mono">#{r.ride}</td>
-                    <td className="metric-val accent">₨{r.amount.toLocaleString()}</td>
-                    <td className="muted">Rider Cancellation</td>
-                    <td className="muted">{formatDate(r.date)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <ReportCard
+          title="Daily Revenue Summary"
+          sub="Gross, commission, and platform net per day"
+          data={revenue}
+          filename="daily_revenue"
+          cols={[
+            { key:'earning_date', label:'Date' },
+            { key:'trips_count',  label:'Rides' },
+            { key:'gross_revenue',label:'Gross',      fmt },
+            { key:'net_revenue',  label:'Net (80%)',  fmt },
+          ]}
+        />
+        <ReportCard
+          title="Driver Settlements"
+          sub="Per-driver gross earnings and net payable"
+          data={drivers}
+          filename="driver_settlements"
+          cols={[
+            { key:'full_name',       label:'Driver' },
+            { key:'trips_paid',      label:'Trips' },
+            { key:'total_gross',     label:'Gross',      fmt },
+            { key:'total_commission',label:'Commission',  fmt },
+            { key:'total_net',       label:'Net',         fmt },
+          ]}
+        />
+        <ReportCard
+          title="Payment Method Breakdown"
+          sub="Volume by payment method and status"
+          data={payments}
+          filename="payment_methods"
+          cols={[
+            { key:'payment_method', label:'Method' },
+            { key:'payment_status', label:'Status' },
+            { key:'count',          label:'Count' },
+            { key:'total',          label:'Volume', fmt },
+          ]}
+        />
+        <ReportCard
+          title="Refunds & Disputes"
+          sub="Reversed transactions by date"
+          data={refunds}
+          filename="refunds"
+          cols={[
+            { key:'date',          label:'Date' },
+            { key:'payment_method',label:'Method' },
+            { key:'count',         label:'Count' },
+            { key:'total_refunded',label:'Total Refunded', fmt },
+          ]}
+        />
       </div>
     </div>
   );
