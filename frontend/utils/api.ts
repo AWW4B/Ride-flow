@@ -111,15 +111,15 @@ export const api = {
       apiFetch("/rider/wallet/topup", { method: "POST", body: JSON.stringify(body) }),
     checkPromo: (code: string) =>
       apiFetch<any>(`/rider/promos/check?code=${code}`),
-    estimateFare: (p: { vehicle_type: string; distance_km: number; duration_min: number; promo_code?: string }) => {
-      const q = new URLSearchParams(p as any);
-      return apiFetch<any>(`/rides/fare-estimate?${q}`);
-    },
+    cancelRequest: (requestId: number) =>
+      apiFetch(`/rider/requests/${requestId}/cancel`, { method: 'POST' }),
   },
 
   // ── Driver ────────────────────────────────────────────────────
   driver: {
     getPending: () => apiFetch<any[]>("/driver/rides/pending"),
+    acceptRequest: (requestId: number) =>
+      apiFetch(`/driver/requests/${requestId}/accept`, { method: 'POST' }),
     acceptRide: (id: number) =>
       apiFetch(`/driver/rides/${id}/accept`, { method: "PUT" }),
     rejectRide: (id: number) =>
@@ -134,6 +134,9 @@ export const api = {
     getProfile: () => apiFetch<any>("/driver/profile"),
     updateLocation: (lat: number, lng: number) =>
       apiFetch("/driver/location", { method: "PUT", body: JSON.stringify({ lat, lng }) }),
+    registerVehicle: (body: object) =>
+      apiFetch("/driver/vehicles", { method: "POST", body: JSON.stringify(body) }),
+    getVehicles: () => apiFetch<any[]>("/driver/vehicles"),
   },
 };
 

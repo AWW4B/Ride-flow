@@ -31,9 +31,8 @@ export default function RequestsPage() {
   const handleAccept = async (req: any) => {
     setActionId(req.request_id);
     try {
-      // The driver accepts based on request_id — backend handles creating/linking ride
-      // For now, we mark locally since backend accept uses ride_id
-      setAccepted(req);
+      const result = await api.driver.acceptRequest(req.request_id);
+      setAccepted({ ...req, ride_id: result.ride_id });
       setRequests(prev => prev.filter(r => r.request_id !== req.request_id));
     } catch (e: any) {
       alert(e.message ?? 'Failed to accept ride');
