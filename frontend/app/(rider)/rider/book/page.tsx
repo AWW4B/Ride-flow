@@ -31,15 +31,7 @@ export default function BookRidePage() {
   const [activeRide,  setActiveRide]  = useState<any>(null);
   const [cancelling,  setCancelling]  = useState(false);
 
-  // Available promo codes fetched from API
-  const [availPromos, setAvailPromos] = useState<string[]>([]);
-
-  useEffect(() => {
-    // Fetch active promos from the rider-accessible endpoint
-    api.rider.getActivePromos()
-      .then(setAvailPromos)
-      .catch(() => setAvailPromos([]));
-  }, []);
+  // Promo chips removed — rider types the code manually and clicks Apply
 
   const applyPromo = async () => {
     if (!promo.trim()) return;
@@ -153,8 +145,8 @@ export default function BookRidePage() {
                 <div style={{ width:10, height:10, borderRadius:2, background:'var(--danger-fg)' }} />
               </div>
               <div style={{ flex:1, display:'flex', flexDirection:'column', gap:8 }}>
-                <input className="input" placeholder="Pickup location" value={pickup} onChange={e=>setPickup(e.target.value)} />
-                <input className="input" placeholder="Dropoff destination" value={dropoff} onChange={e=>setDropoff(e.target.value)} />
+                <input className="input" placeholder="Pickup — e.g. F-7 Markaz, Islamabad" value={pickup} onChange={e=>setPickup(e.target.value)} />
+                <input className="input" placeholder="Dropoff — e.g. Blue Area, Islamabad"  value={dropoff} onChange={e=>setDropoff(e.target.value)} />
               </div>
             </div>
             <div className="form-group" style={{ marginBottom:0 }}>
@@ -221,27 +213,6 @@ export default function BookRidePage() {
             {promoStatus === 'invalid' && (
               <div style={{ marginTop:8, fontSize:12, color:'var(--danger)', padding:'6px 10px', background:'rgba(200,60,60,0.1)', borderRadius:6 }}>
                 Invalid or expired promo code
-              </div>
-            )}
-            {availPromos.length > 0 && (
-              <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
-                {availPromos.slice(0, 5).map((c: any) => (
-                  <button key={c.code ?? c} className="btn btn-ghost btn-sm" onClick={async () => {
-                    const code = c.code ?? c;
-                    setPromo(code);
-                    setPromoStatus('checking');
-                    try {
-                      const detail = await api.rider.checkPromo(code);
-                      setPromoDetail(detail);
-                      setPromoStatus('valid');
-                    } catch {
-                      setPromoDetail(null);
-                      setPromoStatus('invalid');
-                    }
-                  }}>
-                    <span className="badge badge-accent">{c.code ?? c}</span>
-                  </button>
-                ))}
               </div>
             )}
           </div>

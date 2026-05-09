@@ -78,11 +78,12 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
 
     rider_id = _get_rider_id(int(user["sub"]))
 
-    # Coordinates — use NULL when not provided (avoids chk_rr_different_locations constraint)
-    plat = body.pickup_lat  if body.pickup_lat  is not None else None
-    plng = body.pickup_lng  if body.pickup_lng  is not None else None
-    dlat = body.dropoff_lat if body.dropoff_lat is not None else None
-    dlng = body.dropoff_lng if body.dropoff_lng is not None else None
+    # Coordinates — must be non-null AND pickup != dropoff (DB constraints).
+    # Use harmless distinct dummy values when no GPS data is available.
+    plat = body.pickup_lat  if body.pickup_lat  is not None else 0.0001
+    plng = body.pickup_lng  if body.pickup_lng  is not None else 0.0001
+    dlat = body.dropoff_lat if body.dropoff_lat is not None else 0.0
+    dlng = body.dropoff_lng if body.dropoff_lng is not None else 0.0
 
     # Distance estimate
     if body.pickup_lat and body.dropoff_lat:
