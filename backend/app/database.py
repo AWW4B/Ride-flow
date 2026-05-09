@@ -9,7 +9,7 @@ def _ssl_args():
 
 _pool = mysql.connector.pooling.MySQLConnectionPool(
     pool_name="rideflow",
-    pool_size=10,
+    pool_size=5,
     host=settings.DB_HOST,
     port=settings.DB_PORT,
     user=settings.DB_USER,
