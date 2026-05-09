@@ -55,6 +55,27 @@ def verify_driver(driver_id: int, body: VerifyBody, _=admin_only):
     return {"message": f"Driver {body.status}"}
 
 
+@router.get("/vehicles")
+def list_vehicles(status: Optional[str] = None, _=admin_only):
+    sql = """
+        SELECT v.vehicle_id, v.make, v.model, v.year, v.color,
+               v.license_plate, v.vehicle_type, v.verification_status,
+               dv.is_primary, dv.driver_id,
+               u.full_name AS driver_name, u.email AS driver_email
+        FROM Vehicle v
+        JOIN Driver_Vehicle dv ON dv.vehicle_id = v.vehicle_id
+        JOIN Driver d           ON d.driver_id   = dv.driver_id
+        JOIN User   u           ON u.user_id     = d.user_id
+        WHERE 1=1
+    """
+    params = []
+    if status:
+        sql += " AND v.verification_status=%s"
+        params.append(status)
+    sql += " ORDER BY v.vehicle_id DESC"
+    return db.query(sql, params)
+
+
 @router.put("/vehicles/{vehicle_id}/verify")
 def verify_vehicle(vehicle_id: int, body: VerifyBody, _=admin_only):
     if body.status not in ("verified", "rejected"):

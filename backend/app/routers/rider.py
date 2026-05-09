@@ -94,29 +94,35 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
     duration_min = max(1, int(distance / 0.5)) # ~30 km/h
 
     # ── Fare calculation ─────────────────────────────────────────────────────
-    # Try the stored procedure; fall back gracefully if it fails (e.g. missing
-    # surge config rows in an empty DB).
+    # Everything here is best-effort. If any DB call fails, we fall back to
+    # a simple formula so the Ride_Request INSERT always succeeds.
     final_fare     = None
-    fare_config_id = _fare_config_id_for_type(body.vehicle_type) or 1
+    fare_config_id = 1
     surge_mult     = 1.0
+
+    try:
+        fc_rows = db.query(
+            "SELECT fare_config_id FROM Fare_Config WHERE vehicle_type=%s ORDER BY effective_from DESC LIMIT 1",
+            (body.vehicle_type,)
+        )
+        if fc_rows:
+            fare_config_id = fc_rows[0]["fare_config_id"]
+    except Exception:
+        pass
 
     try:
         args, _ = db.call_proc("sp_calculate_fare", [
             body.vehicle_type, round(distance, 2), duration_min,
             body.promo_code or None,
-            None, None, None, None, None, None  # OUT params
+            None, None, None, None, None, None
         ])
-        sp_error = args[9]
-        if sp_error:
-            # SP signalled an error (e.g. invalid promo) — use it as a warning,
-            # not a hard fail, so the request still goes to DB.
-            pass
-        else:
-            final_fare     = float(args[7]) if args[7] is not None else None
-            fare_config_id = int(args[8])   if args[8] is not None else fare_config_id
-            surge_mult     = float(args[5]) if args[5] is not None else 1.0
+        # Safely read OUT params — SP may return shorter tuple on error
+        sp_error       = args[9]  if len(args) > 9 else None
+        if not sp_error:
+            final_fare     = float(args[7]) if len(args) > 7 and args[7] is not None else None
+            fare_config_id = int(args[8])   if len(args) > 8 and args[8] is not None else fare_config_id
+            surge_mult     = float(args[5]) if len(args) > 5 and args[5] is not None else 1.0
     except Exception:
-        # SP not available / misconfigured — continue with fallback
         pass
 
     if final_fare is None:

@@ -104,6 +104,10 @@ export const api = {
       apiFetch(`/admin/promos/${id}`, { method: "PUT", body: JSON.stringify(body) }),
     deletePromo: (id: number) =>
       apiFetch(`/admin/promos/${id}`, { method: "DELETE" }),
+    getVehicles: (status?: string) => {
+      const q = status ? `?status=${status}` : '';
+      return apiFetch<any[]>(`/admin/vehicles${q}`);
+    },
   },
 
   // ── Rider ─────────────────────────────────────────────────────
