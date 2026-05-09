@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 from app import database as db
 from app.utils.security import get_current_user
+from app.utils.ride_lifecycle import auto_advance_ride
 
 router = APIRouter()
 
@@ -86,12 +87,17 @@ def accept_request(request_id: int, user: dict = Depends(get_current_user)):
     except Exception:
         fare_config_id = 1
 
+    # Calculate estimated fare (use 5 km / 10 min as default — no GPS in requests)
+    _rates = {'economy': (80, 25, 3), 'premium': (150, 45, 5), 'bike': (40, 12, 1.5)}
+    _base, _pkm, _pmin = _rates.get(req[0]["vehicle_type_requested"], (80, 25, 3))
+    estimated_fare = round(_base + _pkm * 5.0 + _pmin * 10.0, 2)
+
     ride_id = db.execute("""
         INSERT INTO Ride
           (request_id, driver_id, vehicle_id, fare_config_id,
            status, surge_multiplier, final_fare)
-        VALUES (%s,%s,%s,%s,'accepted',1.0,0.00)
-    """, (request_id, driver["driver_id"], vehicle_id, fare_config_id))
+        VALUES (%s,%s,%s,%s,'accepted',1.0,%s)
+    """, (request_id, driver["driver_id"], vehicle_id, fare_config_id, estimated_fare))
 
     db.execute("UPDATE Ride_Request SET status='matched' WHERE request_id=%s", (request_id,))
     db.execute("UPDATE Driver SET availability='on_trip' WHERE driver_id=%s", (driver["driver_id"],))
@@ -103,7 +109,11 @@ def accept_request(request_id: int, user: dict = Depends(get_current_user)):
     except Exception:
         pass  # Notification insert is non-critical
 
-    return {"message": "Ride accepted", "ride_id": ride_id}
+    # –– kick off the auto-state machine ––
+    rider_id = req[0]["rider_id"]
+    auto_advance_ride(ride_id, driver["driver_id"], rider_id)
+
+    return {"message": "Ride accepted", "ride_id": ride_id, "estimated_fare": estimated_fare}
 
 
 # ── Accept already-created Ride row (auto-matched) ────────────────────────────

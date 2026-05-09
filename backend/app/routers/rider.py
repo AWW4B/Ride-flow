@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional
 from app import database as db
 from app.utils.security import get_current_user
+from app.utils.ride_lifecycle import auto_advance_ride
 import math
 
 router = APIRouter()
@@ -177,10 +178,16 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
         db.execute("UPDATE Ride_Request SET status='matched' WHERE request_id=%s", (request_id,))
         db.execute("UPDATE Driver SET availability='on_trip' WHERE driver_id=%s",
                    (matched_driver["driver_id"],))
-        db.execute("""
-            INSERT INTO Driver_Notification (request_id, driver_id, response)
-            VALUES (%s,%s,'accepted')
-        """, (request_id, matched_driver["driver_id"]))
+        try:
+            db.execute("""
+                INSERT INTO Driver_Notification (request_id, driver_id, response)
+                VALUES (%s,%s,'accepted')
+            """, (request_id, matched_driver["driver_id"]))
+        except Exception:
+            pass
+
+        # –– kick off the auto-state machine ––
+        auto_advance_ride(ride_id, matched_driver["driver_id"], rider_id)
 
         status_msg = "accepted"
     else:
@@ -196,6 +203,46 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
             if matched_driver
             else "Request saved. Waiting for a driver to accept."
         ),
+    }
+
+
+@router.get("/rides/active")
+def get_active_ride(user: dict = Depends(get_current_user)):
+    """Poll endpoint — returns the rider's current live ride or pending request."""
+    rider_id = _get_rider_id(int(user["sub"]))
+    rows = db.query("""
+        SELECT
+            rr.request_id, rr.pickup_address, rr.dropoff_address,
+            rr.vehicle_type_requested, rr.status  AS request_status,
+            ri.ride_id,     ri.status             AS ride_status,
+            ri.final_fare,
+            u.full_name AS driver_name, d.avg_rating AS driver_rating
+        FROM Ride_Request rr
+        LEFT JOIN Ride   ri ON ri.request_id = rr.request_id
+        LEFT JOIN Driver d  ON d.driver_id   = ri.driver_id
+        LEFT JOIN `User` u  ON u.user_id     = d.user_id
+        WHERE rr.rider_id = %s
+          AND rr.status != 'cancelled'
+          AND (ri.ride_id IS NULL OR ri.status != 'cancelled')
+        ORDER BY rr.requested_at DESC
+        LIMIT 1
+    """, (rider_id,))
+    if not rows:
+        return {"active": False}
+    row = rows[0]
+    # Treat a completed ride as inactive after the session (rider will see summary)
+    return {
+        "active":          True,
+        "request_id":      row["request_id"],
+        "ride_id":         row["ride_id"],
+        "pickup_address":  row["pickup_address"],
+        "dropoff_address": row["dropoff_address"],
+        "vehicle_type":    row["vehicle_type_requested"],
+        "request_status":  row["request_status"],
+        "ride_status":     row["ride_status"],
+        "final_fare":      float(row["final_fare"]) if row["final_fare"] is not None else None,
+        "driver_name":     row["driver_name"],
+        "driver_rating":   float(row["driver_rating"]) if row["driver_rating"] else None,
     }
 
 
