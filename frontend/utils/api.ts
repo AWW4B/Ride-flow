@@ -26,7 +26,17 @@ async function apiFetch<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail ?? "Request failed");
+    // Pydantic validation errors: detail is an array of {loc, msg, type}
+    let message: string;
+    if (Array.isArray(err.detail)) {
+      message = err.detail.map((e: any) => {
+        const field = Array.isArray(e.loc) ? e.loc.filter((l: any) => l !== 'body').join('.') : '';
+        return field ? `${field}: ${e.msg}` : e.msg;
+      }).join('; ');
+    } else {
+      message = err.detail ?? err.message ?? "Request failed";
+    }
+    throw new Error(message);
   }
   return res.json() as Promise<T>;
 }
