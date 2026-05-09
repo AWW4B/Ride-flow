@@ -31,7 +31,7 @@ export default function RequestsPage() {
   const handleAccept = async (req: any) => {
     setActionId(req.request_id);
     try {
-      const result = await api.driver.acceptRequest(req.request_id);
+      const result = await api.driver.acceptRequest(req.request_id) as any;
       setAccepted({ ...req, ride_id: result.ride_id });
       setRequests(prev => prev.filter(r => r.request_id !== req.request_id));
     } catch (e: any) {
