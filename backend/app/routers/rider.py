@@ -43,13 +43,16 @@ def _get_rider_id(user_id: int) -> int:
     return rows[0]["rider_id"]
 
 
-def _fare_config_id_for_type(vehicle_type: str) -> Optional[int]:
-    """Return the most recent active fare_config_id for the given vehicle type."""
-    rows = db.query(
-        "SELECT fare_config_id FROM Fare_Config WHERE vehicle_type=%s ORDER BY effective_from DESC LIMIT 1",
-        (vehicle_type,)
-    )
-    return rows[0]["fare_config_id"] if rows else None
+def _fare_config_id_for_type(vehicle_type: str) -> int:
+    """Return the most recent config_id for the given vehicle type, defaulting to 1."""
+    try:
+        rows = db.query(
+            "SELECT config_id FROM Fare_Config WHERE vehicle_type=%s ORDER BY effective_from DESC LIMIT 1",
+            (vehicle_type,)
+        )
+        return rows[0]["config_id"] if rows else 1
+    except Exception:
+        return 1
 
 
 def _base_fare(vehicle_type: str, distance_km: float, duration_min: int) -> float:
@@ -103,11 +106,11 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
 
     try:
         fc_rows = db.query(
-            "SELECT fare_config_id FROM Fare_Config WHERE vehicle_type=%s ORDER BY effective_from DESC LIMIT 1",
+            "SELECT config_id FROM Fare_Config WHERE vehicle_type=%s ORDER BY effective_from DESC LIMIT 1",
             (body.vehicle_type,)
         )
         if fc_rows:
-            fare_config_id = fc_rows[0]["fare_config_id"]
+            fare_config_id = fc_rows[0]["config_id"]
     except Exception:
         pass
 

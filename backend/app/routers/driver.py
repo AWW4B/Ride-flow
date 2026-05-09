@@ -56,7 +56,7 @@ def accept_request(request_id: int, user: dict = Depends(get_current_user)):
     """Driver accepts a pending Ride_Request. Creates the Ride row."""
     driver = _get_driver(int(user["sub"]))
     if driver["verification_status"] != "verified":
-        raise HTTPException(403, "Driver not verified yet")
+        raise HTTPException(403, "Driver not verified yet. Ask admin to verify your account.")
     if driver["availability"] == "on_trip":
         raise HTTPException(400, "You are already on a trip")
 
@@ -64,23 +64,27 @@ def accept_request(request_id: int, user: dict = Depends(get_current_user)):
     if not req:
         raise HTTPException(404, "Request not found")
     if req[0]["status"] != "pending":
-        raise HTTPException(400, f"Request is no longer pending (status: {req[0]['status']})")
+        raise HTTPException(400, f"Request is no longer available (status: {req[0]['status']})")
 
-    # Get driver's primary verified vehicle
+    # Get driver's primary vehicle (any verification status — vehicle check is separate)
     veh = db.query("""
         SELECT dv.vehicle_id FROM Driver_Vehicle dv
-        JOIN Vehicle v ON v.vehicle_id = dv.vehicle_id
         WHERE dv.driver_id=%s AND dv.is_primary=1
         LIMIT 1
     """, (driver["driver_id"],))
-    vehicle_id = veh[0]["vehicle_id"] if veh else None
+    if not veh:
+        raise HTTPException(400, "No vehicle registered. Please register a vehicle first.")
+    vehicle_id = veh[0]["vehicle_id"]
 
-    # Pick the first available fare_config for the requested vehicle type
-    fc = db.query(
-        "SELECT fare_config_id FROM Fare_Config WHERE vehicle_type=%s ORDER BY effective_from DESC LIMIT 1",
-        (req[0]["vehicle_type_requested"],)
-    )
-    fare_config_id = fc[0]["fare_config_id"] if fc else 1
+    # Pick the fare config for this vehicle type (column is config_id, not fare_config_id)
+    try:
+        fc = db.query(
+            "SELECT config_id FROM Fare_Config WHERE vehicle_type=%s ORDER BY effective_from DESC LIMIT 1",
+            (req[0]["vehicle_type_requested"],)
+        )
+        fare_config_id = fc[0]["config_id"] if fc else 1
+    except Exception:
+        fare_config_id = 1
 
     ride_id = db.execute("""
         INSERT INTO Ride
@@ -91,10 +95,13 @@ def accept_request(request_id: int, user: dict = Depends(get_current_user)):
 
     db.execute("UPDATE Ride_Request SET status='matched' WHERE request_id=%s", (request_id,))
     db.execute("UPDATE Driver SET availability='on_trip' WHERE driver_id=%s", (driver["driver_id"],))
-    db.execute("""
-        INSERT INTO Driver_Notification (request_id, driver_id, response)
-        VALUES (%s,%s,'accepted')
-    """, (request_id, driver["driver_id"]))
+    try:
+        db.execute("""
+            INSERT INTO Driver_Notification (request_id, driver_id, response)
+            VALUES (%s,%s,'accepted')
+        """, (request_id, driver["driver_id"]))
+    except Exception:
+        pass  # Notification insert is non-critical
 
     return {"message": "Ride accepted", "ride_id": ride_id}
 
