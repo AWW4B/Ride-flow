@@ -78,11 +78,11 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
 
     rider_id = _get_rider_id(int(user["sub"]))
 
-    # Coordinates — default to 0,0 when not provided
-    plat = body.pickup_lat  or 0.0
-    plng = body.pickup_lng  or 0.0
-    dlat = body.dropoff_lat or 0.0
-    dlng = body.dropoff_lng or 0.0
+    # Coordinates — use NULL when not provided (avoids chk_rr_different_locations constraint)
+    plat = body.pickup_lat  if body.pickup_lat  is not None else None
+    plng = body.pickup_lng  if body.pickup_lng  is not None else None
+    dlat = body.dropoff_lat if body.dropoff_lat is not None else None
+    dlng = body.dropoff_lng if body.dropoff_lng is not None else None
 
     # Distance estimate
     if body.pickup_lat and body.dropoff_lat:
@@ -303,6 +303,21 @@ def topup_wallet(body: TopUpBody, user: dict = Depends(get_current_user)):
     if body.amount <= 0:
         raise HTTPException(400, "Amount must be positive")
     return {"message": "Top-up recorded", "amount": body.amount}
+
+
+@router.get("/promos/active")
+def get_active_promos():
+    """Public endpoint — returns active promo codes for the booking page."""
+    today = "CURDATE()"
+    return db.query("""
+        SELECT code, discount_type, discount_value, valid_from, valid_to, usage_limit, times_used
+        FROM Promo_Code
+        WHERE valid_from <= CURDATE()
+          AND valid_to   >= CURDATE()
+          AND (usage_limit IS NULL OR times_used < usage_limit)
+        ORDER BY promo_id DESC
+        LIMIT 20
+    """)
 
 
 @router.get("/promos/check")

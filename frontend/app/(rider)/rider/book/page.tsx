@@ -35,13 +35,10 @@ export default function BookRidePage() {
   const [availPromos, setAvailPromos] = useState<string[]>([]);
 
   useEffect(() => {
-    api.admin.getPromos()
-      .then(list => setAvailPromos(list.filter((p:any) => {
-        const today = new Date().toISOString().slice(0,10);
-        return p.valid_from <= today && today <= p.valid_to &&
-          (p.usage_limit === null || p.times_used < p.usage_limit);
-      }).map((p:any) => p.code)))
-      .catch(() => {});
+    // Fetch active promos from the rider-accessible endpoint
+    api.rider.getActivePromos()
+      .then(setAvailPromos)
+      .catch(() => setAvailPromos([]));
   }, []);
 
   const applyPromo = async () => {
@@ -78,14 +75,17 @@ export default function BookRidePage() {
   };
 
   const handleCancel = async () => {
-    if (!activeRide?.ride_id) { setStep('form'); return; }
     setCancelling(true);
     try {
-      await api.rider.cancelRide(activeRide.ride_id);
+      if (activeRide?.ride_id) {
+        await api.rider.cancelRide(activeRide.ride_id);
+      } else if (activeRide?.request_id) {
+        await api.rider.cancelRequest(activeRide.request_id);
+      }
       setStep('form');
       setActiveRide(null);
     } catch (err: any) {
-      alert(err.message ?? 'Could not cancel ride');
+      alert(err.message ?? 'Could not cancel');
     } finally { setCancelling(false); }
   };
 
@@ -225,9 +225,21 @@ export default function BookRidePage() {
             )}
             {availPromos.length > 0 && (
               <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
-                {availPromos.slice(0, 5).map(c => (
-                  <button key={c} className="btn btn-ghost btn-sm" onClick={() => { setPromo(c); setPromoStatus('idle'); setPromoDetail(null); }}>
-                    <span className="badge badge-accent">{c}</span>
+                {availPromos.slice(0, 5).map((c: any) => (
+                  <button key={c.code ?? c} className="btn btn-ghost btn-sm" onClick={async () => {
+                    const code = c.code ?? c;
+                    setPromo(code);
+                    setPromoStatus('checking');
+                    try {
+                      const detail = await api.rider.checkPromo(code);
+                      setPromoDetail(detail);
+                      setPromoStatus('valid');
+                    } catch {
+                      setPromoDetail(null);
+                      setPromoStatus('invalid');
+                    }
+                  }}>
+                    <span className="badge badge-accent">{c.code ?? c}</span>
                   </button>
                 ))}
               </div>

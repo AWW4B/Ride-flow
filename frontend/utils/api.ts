@@ -127,6 +127,7 @@ export const api = {
       apiFetch<any>(`/rider/promos/check?code=${code}`),
     cancelRequest: (requestId: number) =>
       apiFetch(`/rider/requests/${requestId}/cancel`, { method: 'POST' }),
+    getActivePromos: () => apiFetch<any[]>('/rider/promos/active'),
   },
 
   // ── Driver ────────────────────────────────────────────────────
