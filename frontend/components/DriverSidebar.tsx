@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { loadUser, clearSession } from '@/utils/api';
 
 const NAV = [
   { href:'/driver/dashboard', label:'Dashboard',  icon:'◈' },
@@ -12,7 +13,19 @@ const NAV = [
 ];
 
 export default function DriverSidebar() {
-  const path = usePathname();
+  const path   = usePathname();
+  const router = useRouter();
+  const user   = loadUser();
+
+  const initials = user?.full_name
+    ? user.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+    : 'D';
+
+  const handleSignOut = () => {
+    clearSession();
+    router.push('/');
+  };
+
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
@@ -35,13 +48,19 @@ export default function DriverSidebar() {
       </nav>
       <div className="sidebar-footer">
         <div className="user-badge">
-          <div className="user-avatar" style={{ background:'var(--bg-s3)', color:'var(--accent)', border:'1px solid rgba(196,169,109,0.25)' }}>AR</div>
+          <div className="user-avatar" style={{ background:'var(--bg-s3)', color:'var(--accent)', border:'1px solid rgba(196,169,109,0.25)' }}>{initials}</div>
           <div>
-            <div className="user-name">Ali Raza</div>
-            <div className="user-role">Driver · Islamabad</div>
+            <div className="user-name">{user?.full_name ?? 'Driver'}</div>
+            <div className="user-role">Driver Account</div>
           </div>
         </div>
-        <Link href="/" className="btn btn-ghost btn-sm" style={{ width:'100%', justifyContent:'center', marginTop:8 }}>Sign Out</Link>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ width:'100%', justifyContent:'center', marginTop:8 }}
+          onClick={handleSignOut}
+        >
+          Sign Out
+        </button>
       </div>
     </aside>
   );

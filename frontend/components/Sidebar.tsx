@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { loadUser, clearSession } from '@/utils/api';
 
 const NAV = [
   { href:'/dashboard',  label:'Dashboard',  icon:'◈' },
@@ -15,7 +16,19 @@ const NAV = [
 ];
 
 export default function Sidebar() {
-  const path = usePathname();
+  const path   = usePathname();
+  const router = useRouter();
+  const user   = loadUser();
+
+  const initials = user?.full_name
+    ? user.full_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+    : 'AD';
+
+  const handleSignOut = () => {
+    clearSession();
+    router.push('/');
+  };
+
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
@@ -40,12 +53,19 @@ export default function Sidebar() {
 
       <div className="sidebar-footer">
         <div className="user-badge">
-          <div className="user-avatar">RZ</div>
+          <div className="user-avatar">{initials}</div>
           <div>
-            <div className="user-name">Rana Zohaib</div>
+            <div className="user-name">{user?.full_name ?? 'Admin'}</div>
             <div className="user-role">Super Admin</div>
           </div>
         </div>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ width:'100%', justifyContent:'center', marginTop:8 }}
+          onClick={handleSignOut}
+        >
+          Sign Out
+        </button>
       </div>
     </aside>
   );
