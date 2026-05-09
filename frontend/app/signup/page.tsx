@@ -98,12 +98,12 @@ function SignupForm() {
           )}
 
           <div className="form-group">
-            <label className="form-label">Password</label>
-            <input className="input" type="password" value={form.password} onChange={e => set('password', e.target.value)} placeholder="••••••••" required minLength={6} />
+            <label className="form-label">Password <span style={{ color:'var(--text-m)', fontWeight:400 }}>(6–20 characters)</span></label>
+            <input className="input" type="password" value={form.password} onChange={e => set('password', e.target.value)} placeholder="••••••••" required minLength={6} maxLength={20} />
           </div>
           <div className="form-group">
             <label className="form-label">Confirm Password</label>
-            <input className="input" type="password" value={form.confirm} onChange={e => set('confirm', e.target.value)} placeholder="••••••••" required minLength={6} />
+            <input className="input" type="password" value={form.confirm} onChange={e => set('confirm', e.target.value)} placeholder="••••••••" required minLength={6} maxLength={20} />
           </div>
 
           {error && <div style={{ color:'var(--danger)',fontSize:12,padding:'8px 12px',background:'rgba(200,60,60,0.1)',borderRadius:6 }}>{error}</div>}

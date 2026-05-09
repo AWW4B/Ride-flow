@@ -64,7 +64,7 @@ export default function LoginPage() {
           </div>
           <div className="form-group">
             <label className="form-label">Password</label>
-            <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+            <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required minLength={6} maxLength={20} />
           </div>
           {error && <div style={{ color:'var(--danger)',fontSize:12,marginBottom:8,padding:'8px 12px',background:'rgba(200,60,60,0.1)',borderRadius:6 }}>{error}</div>}
           <button type="submit" className="btn btn-primary" style={{ width:'100%',justifyContent:'center',padding:'10px',marginTop:6,opacity:loading?0.7:1 }} disabled={loading}>

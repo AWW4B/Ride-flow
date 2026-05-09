@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from app import database as db
 from app.utils.security import hash_password, verify_password, create_token
 
@@ -7,19 +7,19 @@ router = APIRouter()
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=6, max_length=20)
     role: str
 
 class RiderRegister(BaseModel):
     full_name: str
     email: EmailStr
-    password: str
+    password: str = Field(min_length=6, max_length=20)
     phone: str | None = None
 
 class DriverRegister(BaseModel):
     full_name: str
     email: EmailStr
-    password: str
+    password: str = Field(min_length=6, max_length=20)
     phone: str | None = None
     license_number: str | None = None
     cnic: str | None = None
