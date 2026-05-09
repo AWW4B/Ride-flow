@@ -1,14 +1,24 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '@/utils/api';
 
 const METHODS = ['cash', 'card', 'wallet'];
 
 export default function RiderWalletPage() {
-  const [amount, setAmount]  = useState('');
-  const [method, setMethod]  = useState('card');
+  const [balance, setBalance] = useState<number | null>(null);
+  const [amount,  setAmount]  = useState('');
+  const [method,  setMethod]  = useState('card');
   const [saving,  setSaving]  = useState(false);
   const [msg,     setMsg]     = useState('');
+
+  const loadBalance = async () => {
+    try {
+      const { balance: b } = await api.rider.getWallet();
+      setBalance(b);
+    } catch { /* ignore — may not have a wallet row yet */ }
+  };
+
+  useEffect(() => { loadBalance(); }, []);
 
   const topup = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -17,6 +27,7 @@ export default function RiderWalletPage() {
       await api.rider.topupWallet({ amount: Number(amount), payment_method: method });
       setMsg(`₨${amount} top-up recorded via ${method}.`);
       setAmount('');
+      await loadBalance();
     } catch (err: any) { setMsg(err.message); }
     finally { setSaving(false); }
   };
@@ -27,6 +38,15 @@ export default function RiderWalletPage() {
         <div><div className="page-title">Wallet & Payments</div><div className="page-subtitle">Manage your payment methods and top up balance</div></div>
       </div>
       <div style={{ maxWidth:440 }}>
+        {/* Balance card */}
+        <div className="card" style={{ marginBottom:12, textAlign:'center', padding:'24px 20px' }}>
+          <div style={{ fontSize:12, color:'var(--text-m)', letterSpacing:'0.5px', textTransform:'uppercase', marginBottom:6 }}>Wallet Balance</div>
+          <div style={{ fontSize:36, fontWeight:700, color:'var(--accent)' }}>
+            {balance === null ? '—' : `₨${Number(balance).toLocaleString()}`}
+          </div>
+          <div style={{ fontSize:12, color:'var(--text-m)', marginTop:4 }}>Available for rides</div>
+        </div>
+
         <div className="card">
           <div className="card-title">Add Funds</div>
           <form onSubmit={topup} style={{ display:'flex', flexDirection:'column', gap:12 }}>
@@ -38,7 +58,7 @@ export default function RiderWalletPage() {
             <div className="form-group">
               <label className="form-label">Payment Method</label>
               <select className="input" value={method} onChange={e => setMethod(e.target.value)}>
-                {METHODS.map(m => <option key={m} value={m} style={{ textTransform:'capitalize' }}>{m.charAt(0).toUpperCase()+m.slice(1)}</option>)}
+                {METHODS.map(m => <option key={m} value={m}>{m.charAt(0).toUpperCase()+m.slice(1)}</option>)}
               </select>
             </div>
             {msg && <div style={{ fontSize:12, padding:'8px 12px', borderRadius:6, background: msg.includes('₨') ? 'rgba(100,200,100,0.1)' : 'rgba(200,60,60,0.1)', color: msg.includes('₨') ? 'var(--success-fg)' : 'var(--danger-fg)' }}>{msg}</div>}

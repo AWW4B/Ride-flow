@@ -1,10 +1,22 @@
 'use client';
+import { useState, useEffect } from 'react';
+import { api } from '@/utils/api';
 
-const PROMO_CODES = [
-  { code:'WELCOME10', type:'percentage', value:10, validFrom:'2026-01-01', validTo:'2026-12-31', usageLimit:1000, timesUsed:143, status:'active' },
-  { code:'FLAT50',    type:'flat',       value:50, validFrom:'2026-04-01', validTo:'2026-06-30', usageLimit:500,  timesUsed:87,  status:'active' },
-  { code:'EID25',     type:'percentage', value:25, validFrom:'2026-03-28', validTo:'2026-04-05', usageLimit:200,  timesUsed:200, status:'expired' },
-];
+interface Promo {
+  promo_id:      number;
+  code:          string;
+  discount_type: 'percentage' | 'flat';
+  discount_value: number;
+  valid_from:    string;
+  valid_to:      string;
+  usage_limit:   number | null;
+  times_used:    number;
+}
+
+const EMPTY_PROMO: Omit<Promo, 'promo_id' | 'times_used'> = {
+  code: '', discount_type: 'percentage', discount_value: 10,
+  valid_from: '', valid_to: '', usage_limit: null,
+};
 
 const FARE_CONFIG = [
   { type:'Economy',  base:80,  perKm:25, perMin:3.00 },
@@ -19,14 +31,85 @@ const SURGE_RULES = [
 ];
 
 export default function SettingsPage() {
+  const [promos,    setPromos]    = useState<Promo[]>([]);
+  const [loading,   setLoading]   = useState(true);
+  const [showForm,  setShowForm]  = useState(false);
+  const [editing,   setEditing]   = useState<Promo | null>(null);
+  const [form,      setForm]      = useState({ ...EMPTY_PROMO });
+  const [saving,    setSaving]    = useState(false);
+  const [actionId,  setActionId]  = useState<number | null>(null);
+  const [error,     setError]     = useState('');
+  const [toast,     setToast]     = useState('');
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3000); };
+
+  const load = async () => {
+    setLoading(true);
+    try { setPromos(await api.admin.getPromos()); }
+    catch { setError('Failed to load promo codes'); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const openCreate = () => { setEditing(null); setForm({ ...EMPTY_PROMO }); setShowForm(true); setError(''); };
+  const openEdit   = (p: Promo) => {
+    setEditing(p);
+    setForm({
+      code: p.code, discount_type: p.discount_type,
+      discount_value: p.discount_value,
+      valid_from: p.valid_from?.slice(0,10) ?? '',
+      valid_to:   p.valid_to?.slice(0,10) ?? '',
+      usage_limit: p.usage_limit,
+    });
+    setShowForm(true);
+    setError('');
+  };
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true); setError('');
+    try {
+      if (editing) {
+        await api.admin.updatePromo(editing.promo_id, form);
+        showToast('Promo updated ✓');
+      } else {
+        await api.admin.createPromo(form);
+        showToast('Promo created ✓');
+      }
+      setShowForm(false);
+      await load();
+    } catch (err: any) {
+      setError(err.message ?? 'Save failed');
+    } finally { setSaving(false); }
+  };
+
+  const del = async (id: number, code: string) => {
+    if (!confirm(`Delete promo "${code}"?`)) return;
+    setActionId(id);
+    try { await api.admin.deletePromo(id); showToast(`Promo ${code} deleted`); await load(); }
+    catch (err: any) { alert(err.message); }
+    finally { setActionId(null); }
+  };
+
+  const today    = new Date().toISOString().slice(0, 10);
+  const isActive = (p: Promo) => p.valid_from <= today && today <= p.valid_to &&
+    (p.usage_limit === null || p.times_used < p.usage_limit);
+
   return (
     <div>
+      {/* Toast */}
+      {toast && (
+        <div style={{ position:'fixed', top:20, right:20, background:'var(--success-fg)', color:'#fff', padding:'10px 18px', borderRadius:8, fontSize:13, fontWeight:500, zIndex:9999 }}>
+          {toast}
+        </div>
+      )}
+
       <div className="page-header">
         <div>
           <div className="page-title">Settings</div>
-          <div className="page-subtitle">Platform configuration, fare rules, promo codes & surge pricing</div>
+          <div className="page-subtitle">Platform configuration, fare rules, promo codes &amp; surge pricing</div>
         </div>
-        <button className="btn btn-primary">Save Changes</button>
       </div>
 
       <div className="grid-2 mb-16">
@@ -55,15 +138,6 @@ export default function SettingsPage() {
             <span className="metric-key">Platform Commission</span>
             <span className="metric-val accent">20.00%</span>
           </div>
-          <div style={{ marginTop:12 }}>
-            <div className="form-group" style={{ marginBottom:0 }}>
-              <label className="form-label" style={{ display:'block', fontSize:11, color:'var(--text-s)', marginBottom:5 }}>Commission Rate (%)</label>
-              <div style={{ display:'flex', gap:8 }}>
-                <input className="input" type="number" defaultValue={20} style={{ maxWidth:120 }} />
-                <button className="btn btn-ghost btn-sm">Update</button>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Surge Rules */}
@@ -78,57 +152,63 @@ export default function SettingsPage() {
               <div style={{ fontSize:11, color:'var(--text-m)' }}>{s.from} – {s.to} · {s.days}</div>
             </div>
           ))}
-          <div className="divider" />
-          <button className="btn btn-ghost btn-sm" style={{ width:'100%', justifyContent:'center' }}>+ Add Surge Rule</button>
         </div>
       </div>
 
-      {/* Promo Codes */}
+      {/* Promo Codes — live data */}
       <div className="card mb-16">
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
           <div className="card-title" style={{ marginBottom:0 }}>Promo Codes</div>
-          <button className="btn btn-primary btn-sm">+ New Promo</button>
+          <button className="btn btn-primary btn-sm" onClick={openCreate}>+ New Promo</button>
         </div>
+
+        {error && !showForm && (
+          <div style={{ marginBottom:12, color:'var(--danger)', background:'rgba(200,60,60,0.1)', padding:'8px 14px', borderRadius:8, fontSize:13 }}>{error}</div>
+        )}
+
         <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Code</th><th>Type</th><th>Value</th><th>Valid</th><th>Usage</th><th>Remaining</th><th>Status</th><th>Action</th></tr>
-            </thead>
-            <tbody>
-              {PROMO_CODES.map(p=>(
-                <tr key={p.code}>
-                  <td><span className="badge badge-accent">{p.code}</span></td>
-                  <td><span className="badge badge-muted" style={{ textTransform:'capitalize' }}>{p.type}</span></td>
-                  <td style={{ color:'var(--accent)', fontWeight:500 }}>
-                    {p.type==='percentage' ? `${p.value}%` : `₨${p.value}`}
-                  </td>
-                  <td className="muted">{p.validFrom} → {p.validTo}</td>
-                  <td>
-                    <div>
-                      <div style={{ fontSize:12 }}>{p.timesUsed} / {p.usageLimit}</div>
-                      <div className="progress-bar" style={{ width:80, marginTop:3 }}>
-                        <div className="progress-fill" style={{ width:`${(p.timesUsed/p.usageLimit)*100}%` }} />
-                      </div>
-                    </div>
-                  </td>
-                  <td style={{ color: p.usageLimit-p.timesUsed < 50 ? 'var(--warn-fg)' : 'var(--text-s)' }}>
-                    {p.usageLimit - p.timesUsed}
-                  </td>
-                  <td>
-                    {p.status === 'active'
-                      ? <span className="badge badge-success">Active</span>
-                      : <span className="badge badge-muted">Expired</span>}
-                  </td>
-                  <td>
-                    <div style={{ display:'flex', gap:4 }}>
-                      <button className="btn btn-ghost btn-sm">Edit</button>
-                      <button className="btn btn-danger btn-sm">Disable</button>
-                    </div>
-                  </td>
+          {loading ? (
+            <div style={{ textAlign:'center', padding:40, color:'var(--text-m)' }}>Loading promo codes…</div>
+          ) : promos.length === 0 ? (
+            <div className="empty-state"><div className="empty-icon">🏷️</div><p>No promo codes yet.</p></div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Code</th><th>Type</th><th>Value</th><th>Valid</th>
+                  <th>Usage</th><th>Status</th><th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {promos.map(p => (
+                  <tr key={p.promo_id}>
+                    <td><span className="badge badge-accent">{p.code}</span></td>
+                    <td><span className="badge badge-muted" style={{ textTransform:'capitalize' }}>{p.discount_type}</span></td>
+                    <td style={{ color:'var(--accent)', fontWeight:500 }}>
+                      {p.discount_type==='percentage' ? `${p.discount_value}%` : `₨${p.discount_value}`}
+                    </td>
+                    <td className="muted" style={{ fontSize:11 }}>{p.valid_from?.slice(0,10)} → {p.valid_to?.slice(0,10)}</td>
+                    <td>{p.times_used} / {p.usage_limit ?? '∞'}</td>
+                    <td>
+                      {isActive(p)
+                        ? <span className="badge badge-success">Active</span>
+                        : <span className="badge badge-muted">Inactive</span>}
+                    </td>
+                    <td>
+                      <div style={{ display:'flex', gap:4 }}>
+                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(p)}>Edit</button>
+                        <button className="btn btn-ghost btn-sm" style={{ color:'var(--danger)' }}
+                          disabled={actionId === p.promo_id}
+                          onClick={() => del(p.promo_id, p.code)}>
+                          {actionId === p.promo_id ? '…' : 'Delete'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
@@ -152,6 +232,55 @@ export default function SettingsPage() {
           ))}
         </div>
       </div>
+
+      {/* Create / Edit Modal */}
+      {showForm && (
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:999 }}>
+          <div className="card" style={{ width:420, maxWidth:'95vw' }}>
+            <div className="card-title">{editing ? 'Edit Promo Code' : 'New Promo Code'}</div>
+            <form onSubmit={save} style={{ display:'flex', flexDirection:'column', gap:12 }}>
+              <div className="form-group">
+                <label className="form-label">Code</label>
+                <input className="input" value={form.code} onChange={e => setForm(f=>({...f, code:e.target.value.toUpperCase()}))} placeholder="WELCOME10" required />
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                <div className="form-group">
+                  <label className="form-label">Type</label>
+                  <select className="input" value={form.discount_type} onChange={e => setForm(f=>({...f, discount_type: e.target.value as any}))}>
+                    <option value="percentage">Percentage (%)</option>
+                    <option value="flat">Flat (₨)</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Value {form.discount_type==='percentage' ? '(0-100%)' : '(₨)'}</label>
+                  <input className="input" type="number" min="0.01" max={form.discount_type==='percentage'?100:undefined} step="0.01"
+                    value={form.discount_value} onChange={e => setForm(f=>({...f, discount_value:+e.target.value}))} required />
+                </div>
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                <div className="form-group">
+                  <label className="form-label">Valid From</label>
+                  <input className="input" type="date" value={form.valid_from} onChange={e => setForm(f=>({...f, valid_from:e.target.value}))} required />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Valid To</label>
+                  <input className="input" type="date" value={form.valid_to} onChange={e => setForm(f=>({...f, valid_to:e.target.value}))} required />
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Usage Limit <span style={{color:'var(--text-m)',fontWeight:400}}>(blank = unlimited)</span></label>
+                <input className="input" type="number" min="1" placeholder="e.g. 500" value={form.usage_limit ?? ''}
+                  onChange={e => setForm(f=>({...f, usage_limit: e.target.value ? +e.target.value : null}))} />
+              </div>
+              {error && <div style={{ color:'var(--danger)', fontSize:12, padding:'6px 10px', background:'rgba(200,60,60,0.1)', borderRadius:6 }}>{error}</div>}
+              <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:4 }}>
+                <button type="button" className="btn btn-ghost" onClick={() => setShowForm(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : (editing ? 'Update' : 'Create')}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,13 +1,13 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { api } from '@/utils/api';
 
 const VEHICLE_TYPES = [
   { key:'economy', label:'Economy', icon:'🚗', desc:'Affordable everyday rides', base:'₨80 + ₨25/km' },
   { key:'premium', label:'Premium', icon:'🏎️', desc:'Luxury vehicles, priority service', base:'₨150 + ₨45/km' },
   { key:'bike',    label:'Bike',    icon:'🏍️', desc:'Fast & budget-friendly', base:'₨40 + ₨12/km' },
 ];
-
-const PROMO_CODES = ['WELCOME10','FLAT50','EID25'];
 
 const POPULAR_ROUTES = [
   { from:'F-7 Markaz, Islamabad', to:'Blue Area, Islamabad' },
@@ -16,63 +16,116 @@ const POPULAR_ROUTES = [
 ];
 
 export default function BookRidePage() {
-  const [pickup, setPickup] = useState('');
-  const [dropoff, setDropoff] = useState('');
+  const router = useRouter();
+
+  const [pickup,      setPickup]      = useState('');
+  const [dropoff,     setDropoff]     = useState('');
   const [vehicleType, setVehicleType] = useState('economy');
-  const [promo, setPromo] = useState('');
-  const [schedule, setSchedule] = useState('');
-  const [step, setStep] = useState<'form'|'confirm'|'searching'|'matched'>('form');
+  const [promo,       setPromo]       = useState('');
+  const [promoStatus, setPromoStatus] = useState<'idle'|'checking'|'valid'|'invalid'>('idle');
+  const [promoDetail, setPromoDetail] = useState<any>(null);
+  const [schedule,    setSchedule]    = useState('');
+
+  const [step,        setStep]        = useState<'form'|'searching'|'matched'>('form');
+  const [booking,     setBooking]     = useState(false);
+  const [activeRide,  setActiveRide]  = useState<any>(null);
+  const [cancelling,  setCancelling]  = useState(false);
+
+  // Available promo codes fetched from API
+  const [availPromos, setAvailPromos] = useState<string[]>([]);
+
+  useEffect(() => {
+    api.admin.getPromos()
+      .then(list => setAvailPromos(list.filter((p:any) => {
+        const today = new Date().toISOString().slice(0,10);
+        return p.valid_from <= today && today <= p.valid_to &&
+          (p.usage_limit === null || p.times_used < p.usage_limit);
+      }).map((p:any) => p.code)))
+      .catch(() => {});
+  }, []);
+
+  const applyPromo = async () => {
+    if (!promo.trim()) return;
+    setPromoStatus('checking');
+    try {
+      const detail = await api.rider.checkPromo(promo.trim());
+      setPromoDetail(detail);
+      setPromoStatus('valid');
+    } catch {
+      setPromoDetail(null);
+      setPromoStatus('invalid');
+    }
+  };
+
+  const handleBook = async () => {
+    if (!pickup || !dropoff) return;
+    setBooking(true);
+    try {
+      const ride = await api.rider.requestRide({
+        pickup_address:  pickup,
+        dropoff_address: dropoff,
+        vehicle_type:    vehicleType,
+        promo_code:      promoStatus === 'valid' ? promo : undefined,
+        scheduled_at:    schedule || undefined,
+      });
+      setActiveRide(ride);
+      setStep('matched');
+    } catch (err: any) {
+      alert(err.message ?? 'Could not request ride');
+    } finally {
+      setBooking(false);
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!activeRide?.ride_id) { setStep('form'); return; }
+    setCancelling(true);
+    try {
+      await api.rider.cancelRide(activeRide.ride_id);
+      setStep('form');
+      setActiveRide(null);
+    } catch (err: any) {
+      alert(err.message ?? 'Could not cancel ride');
+    } finally { setCancelling(false); }
+  };
 
   const selected = VEHICLE_TYPES.find(v => v.key === vehicleType)!;
-
-  const handleBook = () => {
-    setStep('searching');
-    setTimeout(() => setStep('matched'), 2200);
-  };
 
   if (step === 'matched') {
     return (
       <div>
         <div className="page-header">
-          <div><div className="page-title">Ride Matched! 🎉</div></div>
-          <button className="btn btn-ghost" onClick={()=>setStep('form')}>Book Another</button>
+          <div><div className="page-title">Ride Requested! 🎉</div></div>
+          <button className="btn btn-ghost" onClick={() => { setStep('form'); setActiveRide(null); }}>Book Another</button>
         </div>
         <div style={{ maxWidth:500 }}>
           <div className="card" style={{ border:'1px solid rgba(196,169,109,0.25)', marginBottom:16 }}>
             <div style={{ textAlign:'center', padding:'12px 0 16px' }}>
               <div style={{ fontSize:32, marginBottom:8 }}>🚗</div>
-              <div style={{ fontSize:18, fontWeight:700, marginBottom:2 }}>Ali Raza</div>
-              <div style={{ fontSize:13, color:'var(--text-s)', marginBottom:8 }}>Toyota Corolla 2022 · White · LHR-1234</div>
-              <div style={{ color:'var(--accent)', fontSize:18 }}>★ 4.91</div>
+              <div style={{ fontSize:18, fontWeight:700, marginBottom:2 }}>Searching for a driver…</div>
+              <div style={{ fontSize:13, color:'var(--text-s)', marginBottom:8 }}>Ride #{activeRide?.ride_id ?? '—'}</div>
             </div>
             <div className="divider" />
-            <div className="metric-row"><span className="metric-key">Pickup</span><span className="metric-val">{pickup || 'F-7 Markaz'}</span></div>
-            <div className="metric-row"><span className="metric-key">Dropoff</span><span className="metric-val">{dropoff || 'Blue Area'}</span></div>
+            <div className="metric-row"><span className="metric-key">Pickup</span><span className="metric-val">{pickup}</span></div>
+            <div className="metric-row"><span className="metric-key">Dropoff</span><span className="metric-val">{dropoff}</span></div>
             <div className="metric-row"><span className="metric-key">Vehicle</span><span className="metric-val">{selected.label}</span></div>
-            <div className="metric-row"><span className="metric-key">Est. Fare</span><span className="metric-val accent">₨285.00</span></div>
-            <div className="metric-row"><span className="metric-key">ETA</span><span className="metric-val" style={{ color:'var(--success-fg)' }}>~4 min</span></div>
+            {activeRide?.final_fare && (
+              <div className="metric-row"><span className="metric-key">Fare</span><span className="metric-val accent">₨{Number(activeRide.final_fare).toLocaleString()}</span></div>
+            )}
             <div className="divider" />
             <div style={{ textAlign:'center', padding:'8px 0' }}>
-              <div style={{ fontSize:11, color:'var(--text-m)', marginBottom:4 }}>Driver is on the way</div>
-              <div className="live-dot" /><span style={{ fontSize:12, color:'var(--success-fg)' }}>Live tracking active</span>
+              <div className="live-dot" />
+              <span style={{ fontSize:12, color:'var(--success-fg)' }}>Looking for nearby drivers</span>
             </div>
           </div>
-          <button className="btn btn-danger" style={{ width:'100%', justifyContent:'center' }}>Cancel Ride</button>
-        </div>
-      </div>
-    );
-  }
-
-  if (step === 'searching') {
-    return (
-      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:'60vh', gap:16 }}>
-        <div style={{ fontSize:48 }}>🔍</div>
-        <div style={{ fontSize:18, fontWeight:600 }}>Finding you a driver…</div>
-        <div style={{ fontSize:13, color:'var(--text-s)' }}>Searching {selected.label} drivers near you</div>
-        <div style={{ display:'flex', gap:6, marginTop:8 }}>
-          {[0,1,2].map(i => (
-            <div key={i} style={{ width:8, height:8, borderRadius:'50%', background:'var(--accent)', animation:`pulse-dot 1.4s ${i*0.2}s ease-in-out infinite` }} />
-          ))}
+          <button
+            className="btn btn-danger"
+            style={{ width:'100%', justifyContent:'center', opacity: cancelling ? 0.7 : 1 }}
+            disabled={cancelling}
+            onClick={handleCancel}
+          >
+            {cancelling ? 'Cancelling…' : 'Cancel Ride'}
+          </button>
         </div>
       </div>
     );
@@ -145,47 +198,61 @@ export default function BookRidePage() {
           <div className="card">
             <div className="card-title">Promo Code</div>
             <div style={{ display:'flex', gap:8 }}>
-              <input className="input" placeholder="Enter code (e.g. WELCOME10)" value={promo} onChange={e=>setPromo(e.target.value.toUpperCase())} style={{ flex:1 }} />
-              <button className="btn btn-ghost">Apply</button>
+              <input
+                className="input"
+                placeholder="Enter code (e.g. WELCOME10)"
+                value={promo}
+                onChange={e => { setPromo(e.target.value.toUpperCase()); setPromoStatus('idle'); setPromoDetail(null); }}
+                style={{ flex:1 }}
+              />
+              <button
+                className="btn btn-ghost"
+                onClick={applyPromo}
+                disabled={promoStatus === 'checking' || !promo.trim()}
+              >
+                {promoStatus === 'checking' ? '…' : 'Apply'}
+              </button>
             </div>
-            <div style={{ display:'flex', gap:6, marginTop:10 }}>
-              {PROMO_CODES.map(c => (
-                <button key={c} className="btn btn-ghost btn-sm" onClick={()=>setPromo(c)}>
-                  <span className="badge badge-accent">{c}</span>
-                </button>
-              ))}
-            </div>
+            {promoStatus === 'valid' && promoDetail && (
+              <div style={{ marginTop:8, fontSize:12, color:'var(--success-fg)', padding:'6px 10px', background:'rgba(100,200,100,0.1)', borderRadius:6 }}>
+                ✓ {promoDetail.discount_type === 'percentage' ? `${promoDetail.discount_value}% off` : `₨${promoDetail.discount_value} off`} applied
+              </div>
+            )}
+            {promoStatus === 'invalid' && (
+              <div style={{ marginTop:8, fontSize:12, color:'var(--danger)', padding:'6px 10px', background:'rgba(200,60,60,0.1)', borderRadius:6 }}>
+                Invalid or expired promo code
+              </div>
+            )}
+            {availPromos.length > 0 && (
+              <div style={{ display:'flex', gap:6, marginTop:10, flexWrap:'wrap' }}>
+                {availPromos.slice(0, 5).map(c => (
+                  <button key={c} className="btn btn-ghost btn-sm" onClick={() => { setPromo(c); setPromoStatus('idle'); setPromoDetail(null); }}>
+                    <span className="badge badge-accent">{c}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <button
             className="btn btn-primary"
-            style={{ justifyContent:'center', padding:'12px', fontSize:15 }}
-            disabled={!pickup || !dropoff}
+            style={{ justifyContent:'center', padding:'12px', fontSize:15, opacity: booking ? 0.7 : 1 }}
+            disabled={!pickup || !dropoff || booking}
             onClick={handleBook}
           >
-            {(!pickup || !dropoff) ? 'Enter pickup & destination' : `Request ${selected.label} Ride →`}
+            {booking ? 'Requesting ride…' : (!pickup || !dropoff) ? 'Enter pickup & destination' : `Request ${selected.label} Ride →`}
           </button>
         </div>
 
-        {/* Sidebar: fare estimate + popular */}
+        {/* Sidebar: popular routes */}
         <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
           <div className="card">
-            <div className="card-title">Fare Estimate</div>
-            <div style={{ fontSize:32, fontWeight:700, color:'var(--accent)', marginBottom:4 }}>₨285</div>
-            <div style={{ fontSize:12, color:'var(--text-m)', marginBottom:14 }}>for ~8 km · ~22 min</div>
-            <div className="metric-row"><span className="metric-key">Base fare</span><span className="metric-val">₨80</span></div>
-            <div className="metric-row"><span className="metric-key">Distance (8km)</span><span className="metric-val">₨200</span></div>
-            <div className="metric-row"><span className="metric-key">Time (22min)</span><span className="metric-val">₨66</span></div>
-            {promo && <div className="metric-row"><span className="metric-key">Promo ({promo})</span><span className="metric-val" style={{ color:'var(--success-fg)' }}>−₨34.60</span></div>}
+            <div className="card-title">Fare Info</div>
+            <div className="metric-row"><span className="metric-key">Base fare</span><span className="metric-val">₨{selected.key==='economy'?80:selected.key==='premium'?150:40}</span></div>
+            <div className="metric-row"><span className="metric-key">Per km</span><span className="metric-val">₨{selected.key==='economy'?25:selected.key==='premium'?45:12}</span></div>
+            <div className="metric-row"><span className="metric-key">Per min</span><span className="metric-val">₨{selected.key==='economy'?3:selected.key==='premium'?5:1.5}</span></div>
             <div className="divider" />
-            <div className="metric-row">
-              <span style={{ fontWeight:600 }}>Total</span>
-              <span style={{ color:'var(--accent)', fontWeight:700, fontSize:16 }}>{promo ? '₨311.40' : '₨346.00'}</span>
-            </div>
-            <div style={{ marginTop:12 }}>
-              <div style={{ fontSize:11, color:'var(--text-m)', marginBottom:6 }}>No surge active right now</div>
-              <div style={{ fontSize:11, color:'var(--text-m)' }}>Payment via Wallet or Cash</div>
-            </div>
+            <div style={{ fontSize:11, color:'var(--text-m)' }}>Final fare calculated by server including surge & promo</div>
           </div>
 
           <div className="card">

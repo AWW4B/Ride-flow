@@ -4,22 +4,22 @@ import { useRouter } from 'next/navigation';
 import { api, saveSession } from '@/utils/api';
 
 const ROLES = [
-  { key: 'admin',  label: 'Admin',  icon: '🛡️', hint: 'admin@rideflow.pk' },
-  { key: 'driver', label: 'Driver', icon: '🚗', hint: '' },
-  { key: 'rider',  label: 'Rider',  icon: '🧍', hint: '' },
+  { key: 'admin',  label: 'Admin',  icon: '🛡️' },
+  { key: 'driver', label: 'Driver', icon: '🚗' },
+  { key: 'rider',  label: 'Rider',  icon: '🧍' },
 ] as const;
 
 export default function LoginPage() {
   const router = useRouter();
-  const [role, setRole]       = useState<'admin'|'rider'|'driver'>('admin');
-  const [email, setEmail]     = useState('admin@rideflow.pk');
+  const [role, setRole]         = useState<'admin'|'rider'|'driver'>('admin');
+  const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState('');
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
 
-  const selectRole = (r: typeof role, hint: string) => {
+  const selectRole = (r: typeof role) => {
     setRole(r);
-    setEmail(hint);
+    setEmail('');
     setError('');
   };
 
@@ -51,7 +51,7 @@ export default function LoginPage() {
 
         <div className="role-pills">
           {ROLES.map(r => (
-            <button key={r.key} className={`role-pill${role===r.key?' selected':''}`} onClick={() => selectRole(r.key, r.hint)}>
+            <button key={r.key} className={`role-pill${role===r.key?' selected':''}`} onClick={() => selectRole(r.key)}>
               <span className="role-icon">{r.icon}</span>{r.label}
             </button>
           ))}
@@ -60,7 +60,7 @@ export default function LoginPage() {
         <form onSubmit={handleLogin}>
           <div className="form-group">
             <label className="form-label">Email Address</label>
-            <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@rideflow.pk" required />
+            <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
           </div>
           <div className="form-group">
             <label className="form-label">Password</label>
@@ -72,9 +72,12 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {role === 'admin' && (
-          <div className="form-hint" style={{ marginTop:14, color:'var(--text-m)', fontSize:12 }}>
-            Default admin: <span style={{ color:'var(--accent)' }}>admin@rideflow.pk</span> / <span style={{ color:'var(--accent)' }}>admin123</span>
+        {(role === 'rider' || role === 'driver') && (
+          <div style={{ marginTop:16, textAlign:'center', fontSize:13, color:'var(--text-m)' }}>
+            Don&apos;t have an account?{' '}
+            <a href={`/signup?role=${role}`} style={{ color:'var(--accent)', fontWeight:500, textDecoration:'none' }}>
+              Sign up as {role}
+            </a>
           </div>
         )}
       </div>
