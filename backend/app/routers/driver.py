@@ -226,7 +226,7 @@ def request_payout(user: dict = Depends(get_current_user)):
     except Exception:
         # SP not available — insert directly
         payout_id = db.execute("""
-            INSERT INTO Payout_Request (driver_id, amount, status)
+            INSERT INTO Payout_Request (driver_id, requested_amount, status)
             VALUES (%s, %s, 'pending')
         """, (driver["driver_id"], driver["wallet_balance"]))
         return {"message": "Payout requested", "payout_id": payout_id}

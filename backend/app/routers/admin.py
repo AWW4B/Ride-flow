@@ -35,7 +35,7 @@ def update_user_status(user_id: int, body: StatusUpdate, _=admin_only):
 @router.get("/drivers")
 def list_drivers(_=admin_only):
     return db.query("""
-        SELECT d.driver_id, u.full_name, u.email, u.account_status,
+        SELECT d.driver_id, u.user_id, u.full_name, u.email, u.account_status,
                d.license_number, d.cnic, d.city,
                d.verification_status, d.availability,
                d.avg_rating, d.trips_completed, d.wallet_balance
