@@ -705,8 +705,11 @@ CREATE TABLE Rating (
 
   CONSTRAINT chk_rating_score
     CHECK (score BETWEEN 1 AND 5),
-  CONSTRAINT chk_rating_different_users
-    CHECK (rater_id <> ratee_id),
+
+  -- NOTE: rater_id <> ratee_id is enforced by
+  -- trg_rating_no_self_rate (BEFORE INSERT / BEFORE UPDATE)
+  -- because MySQL 8 forbids CHECK constraints on columns that
+  -- also appear in FK referential actions (Error 3823).
 
   CONSTRAINT fk_rating_ride
     FOREIGN KEY (ride_id)  REFERENCES Ride(ride_id)
@@ -728,6 +731,36 @@ CREATE TABLE Rating (
 DELIMITER $$
 
 -- ------------------------------------------------------------
+--  trg_rating_no_self_rate  (replaces Error-3823 CHECK)
+--  MySQL 8 forbids CHECK constraints on columns that also
+--  appear in FK referential actions (Error 3823).
+--  This BEFORE INSERT / UPDATE trigger provides the same
+--  guarantee: a user cannot rate themselves.
+-- ------------------------------------------------------------
+DROP TRIGGER IF EXISTS trg_rating_no_self_rate_insert$$
+CREATE TRIGGER trg_rating_no_self_rate_insert
+BEFORE INSERT ON Rating
+FOR EACH ROW
+BEGIN
+  IF NEW.rater_id = NEW.ratee_id THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'A user cannot rate themselves (rater_id = ratee_id).';
+  END IF;
+END$$
+
+DROP TRIGGER IF EXISTS trg_rating_no_self_rate_update$$
+CREATE TRIGGER trg_rating_no_self_rate_update
+BEFORE UPDATE ON Rating
+FOR EACH ROW
+BEGIN
+  IF NEW.rater_id = NEW.ratee_id THEN
+    SIGNAL SQLSTATE '45000'
+      SET MESSAGE_TEXT = 'A user cannot rate themselves (rater_id = ratee_id).';
+  END IF;
+END$$
+
+
+-- ------------------------------------------------------------
 --  sp_calculate_fare
 --  Reads the current active Fare_Config and any applicable
 --  Surge_Rule for the current time/day.  Applies promo discount
@@ -747,7 +780,10 @@ CREATE PROCEDURE sp_calculate_fare(
   OUT p_fare_config_id INT,
   OUT p_error        VARCHAR(255)
 )
-BEGIN
+-- FIX: label the BEGIN block so LEAVE sp_calculate_fare is valid (Error 1308).
+-- MySQL only allows LEAVE to target a labelled block or loop; an unlabelled
+-- BEGIN...END has no name to jump to.
+sp_calculate_fare: BEGIN
   DECLARE v_base_rate    DECIMAL(8,2);
   DECLARE v_per_km       DECIMAL(8,2);
   DECLARE v_per_min      DECIMAL(8,2);
@@ -843,7 +879,8 @@ CREATE PROCEDURE sp_complete_ride(
   OUT p_final_fare   DECIMAL(10,2),
   OUT p_error        VARCHAR(255)
 )
-BEGIN
+-- FIX: label the BEGIN block (same Error 1308 as sp_calculate_fare).
+sp_complete_ride: BEGIN
   DECLARE v_driver_id      INT;
   DECLARE v_vehicle_type   ENUM('economy','premium','bike');
   DECLARE v_fare_config_id INT;
@@ -942,7 +979,8 @@ CREATE PROCEDURE sp_request_payout(
   OUT p_payout_id INT,
   OUT p_error     VARCHAR(255)
 )
-BEGIN
+-- FIX: label the BEGIN block (same Error 1308 as sp_calculate_fare).
+sp_request_payout: BEGIN
   DECLARE v_balance DECIMAL(12,2);
   SET p_error = NULL; SET p_payout_id = NULL;
 
@@ -1297,9 +1335,9 @@ WHERE r.flagged = 1;
 -- ================================================================
 
 -- Admin: full control
-CREATE USER IF NOT EXISTS 'rf_admin'@'%'
-  IDENTIFIED BY 'Admin@RideFlow2026!';
-GRANT ALL PRIVILEGES ON rideflow.* TO 'rf_admin'@'%';
+CREATE USER IF NOT EXISTS 'admin'
+  IDENTIFIED BY 'admin123';
+GRANT ALL PRIVILEGES ON rideflow.* TO 'admin';
 
 -- Rider service account
 CREATE USER IF NOT EXISTS 'rf_rider'@'%'
@@ -1396,3 +1434,5 @@ VALUES
 -- ================================================================
 --  END OF SCHEMA
 -- ================================================================
+SHOW TABLES;
+describe driver;
