@@ -2,7 +2,7 @@ name: Deploy RideFlow Backend
 
 on:
   push:
-    branches: [backend-deploy]
+    branches: [main]
     paths:
       - "backend/**"
 
