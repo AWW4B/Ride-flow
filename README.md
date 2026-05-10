@@ -48,14 +48,55 @@ RideFlow connects riders who need transportation with nearby drivers willing to 
 - **Automated Flagging:** Database triggers automatically flag driver accounts if average ratings drop below 3.5 stars.
 - **Leaderboards:** Live ranking of top-rated drivers by city.
 
+### **Awwab Ahmad**
+
+* Roll No: **23i-0079**
+
+#### 🌟Contributions
+
+* Developed the core RideFlow platform architecture.
+* Implemented the DBMS design for ride-hailing workflows.
+* Built user management system with role-based access control.
+* Developed ride request and driver matching system.
+* Implemented ride lifecycle management.
+* Designed driver and vehicle management modules.
+* Integrated fare calculation and payment management system.
+* Developed ratings and reviews functionality.
+* Contributed to FastAPI backend and React frontend integration.
+* Configured deployment setup using Vercel and Oracle Cloud.
+
 ---
 
-## 👨‍💻 Contributor
+### **Zohaib**
 
-* **Awwab Ahmad** 
-  * Roll No: **23i-0079**
+* Roll No: **23i-0096**
 
----
+#### 🔧 Contributions & Fixes
+
+* Fixed critical driver wallet issue by ensuring `sp_complete_ride` is called on ride completion.
+* Implemented proper driver earnings insertion and wallet credit flow.
+* Added manual fallback logic for `Driver_Earnings` insertion.
+* Added support for dynamic payment methods (`cash`, `wallet`, `card`).
+* Updated `RideRequest` model to include `payment_method`.
+* Fixed payment records always being stored as `cash`.
+* Fixed driver availability not resetting after ride cancellation.
+* Added automatic recovery from `on_trip` state after cancellation.
+* Cleared stale driver coordinates after ride completion/cancellation.
+* Fixed nearest-driver matching corruption caused by stale locations.
+* Removed race condition by atomically updating `status` and `started_at`.
+* Registered missing rides router in `main.py`.
+* Fully implemented previously incomplete `rides.py` endpoints.
+* Implemented `POST /rides/estimate` endpoint.
+* Added driver live location fields to rider active ride response.
+* Added `GET /driver/rides/active` endpoint for active trip polling.
+* Added `POST /driver/rides/{id}/complete` endpoint with real distance/duration support.
+* Replaced hardcoded fare completion logic with real trip metrics.
+* Added frontend API support for ride completion endpoint.
+* Added frontend API methods for newly implemented ride endpoints.
+* Added validation for latitude and longitude ranges in driver location updates.
+* Improved cancellation handling throughout ride lifecycle automation.
+* Improved ride lifecycle consistency and state synchronization across backend services.
+
 
 ## 🛠️ Tech Stack Highlights
 * **Database:** MySQL (Cloud-hosted for high availability)
