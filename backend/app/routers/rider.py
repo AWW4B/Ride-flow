@@ -19,6 +19,7 @@ class RideRequest(BaseModel):
     dropoff_lng:     Optional[float] = None
     promo_code:      Optional[str] = None
     scheduled_at:    Optional[str] = None
+    payment_method:  Optional[str] = "cash"   # NEW: rider chooses payment method
 
 class RatingBody(BaseModel):
     score:   int
@@ -42,18 +43,6 @@ def _get_rider_id(user_id: int) -> int:
     if not rows:
         raise HTTPException(404, "Rider profile not found")
     return rows[0]["rider_id"]
-
-
-def _fare_config_id_for_type(vehicle_type: str) -> int:
-    """Return the most recent config_id for the given vehicle type, defaulting to 1."""
-    try:
-        rows = db.query(
-            "SELECT config_id FROM Fare_Config WHERE vehicle_type=%s ORDER BY effective_from DESC LIMIT 1",
-            (vehicle_type,)
-        )
-        return rows[0]["config_id"] if rows else 1
-    except Exception:
-        return 1
 
 
 def _base_fare(vehicle_type: str, distance_km: float, duration_min: int) -> float:
@@ -80,10 +69,13 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
     if not body.dropoff_address.strip():
         raise HTTPException(400, "dropoff_address is required")
 
+    # FIX: validate payment method before anything else
+    valid_payment = {"cash", "wallet", "card"}
+    payment_method = body.payment_method if body.payment_method in valid_payment else "cash"
+
     rider_id = _get_rider_id(int(user["sub"]))
 
-    # Coordinates — must be non-null AND pickup != dropoff (DB constraints).
-    # Use harmless distinct dummy values when no GPS data is available.
+    # Coordinates
     plat = body.pickup_lat  if body.pickup_lat  is not None else 0.0001
     plng = body.pickup_lng  if body.pickup_lng  is not None else 0.0001
     dlat = body.dropoff_lat if body.dropoff_lat is not None else 0.0
@@ -92,15 +84,13 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
     # Distance estimate
     if body.pickup_lat and body.dropoff_lat:
         distance = _haversine(plat, plng, dlat, dlng)
-        distance = max(distance, 1.0)          # at least 1 km
+        distance = max(distance, 1.0)
     else:
-        distance = 5.0                          # default when no GPS
+        distance = 5.0
 
-    duration_min = max(1, int(distance / 0.5)) # ~30 km/h
+    duration_min = max(1, int(distance / 0.5))
 
     # ── Fare calculation ─────────────────────────────────────────────────────
-    # Everything here is best-effort. If any DB call fails, we fall back to
-    # a simple formula so the Ride_Request INSERT always succeeds.
     final_fare     = None
     fare_config_id = 1
     surge_mult     = 1.0
@@ -121,8 +111,7 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
             body.promo_code or None,
             None, None, None, None, None, None
         ])
-        # Safely read OUT params — SP may return shorter tuple on error
-        sp_error       = args[9]  if len(args) > 9 else None
+        sp_error = args[9] if len(args) > 9 else None
         if not sp_error:
             final_fare     = float(args[7]) if len(args) > 7 and args[7] is not None else None
             fare_config_id = int(args[8])   if len(args) > 8 and args[8] is not None else fare_config_id
@@ -186,8 +175,9 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
         except Exception:
             pass
 
-        # –– kick off the auto-state machine ––
-        auto_advance_ride(ride_id, matched_driver["driver_id"], rider_id)
+        # FIX: pass payment_method to auto_advance so Payment row uses the right method
+        auto_advance_ride(ride_id, matched_driver["driver_id"], rider_id,
+                          payment_method=payment_method)
 
         status_msg = "accepted"
     else:
@@ -198,6 +188,7 @@ def request_ride(body: RideRequest, user: dict = Depends(get_current_user)):
         "request_id":     request_id,
         "status":         status_msg,
         "estimated_fare": final_fare,
+        "payment_method": payment_method,
         "message": (
             "Driver matched and en route!"
             if matched_driver
@@ -216,7 +207,8 @@ def get_active_ride(user: dict = Depends(get_current_user)):
             rr.vehicle_type_requested, rr.status  AS request_status,
             ri.ride_id,     ri.status             AS ride_status,
             ri.final_fare,
-            u.full_name AS driver_name, d.avg_rating AS driver_rating
+            u.full_name AS driver_name, d.avg_rating AS driver_rating,
+            d.current_lat AS driver_lat, d.current_lng AS driver_lng
         FROM Ride_Request rr
         LEFT JOIN Ride   ri ON ri.request_id = rr.request_id
         LEFT JOIN Driver d  ON d.driver_id   = ri.driver_id
@@ -230,7 +222,6 @@ def get_active_ride(user: dict = Depends(get_current_user)):
     if not rows:
         return {"active": False}
     row = rows[0]
-    # Treat a completed ride as inactive after the session (rider will see summary)
     return {
         "active":          True,
         "request_id":      row["request_id"],
@@ -243,6 +234,9 @@ def get_active_ride(user: dict = Depends(get_current_user)):
         "final_fare":      float(row["final_fare"]) if row["final_fare"] is not None else None,
         "driver_name":     row["driver_name"],
         "driver_rating":   float(row["driver_rating"]) if row["driver_rating"] else None,
+        # FIX: expose driver coordinates so rider can see driver moving on map
+        "driver_lat":      float(row["driver_lat"]) if row["driver_lat"] else None,
+        "driver_lng":      float(row["driver_lng"]) if row["driver_lng"] else None,
     }
 
 
@@ -260,11 +254,16 @@ def ride_history(user: dict = Depends(get_current_user)):
             ri.ride_id,
             ri.status,
             ri.final_fare     AS fare,
-            u.full_name       AS driver_name
+            ri.distance_km,
+            ri.duration_min,
+            u.full_name       AS driver_name,
+            p.payment_method,
+            p.payment_status
         FROM Ride_Request rr
-        LEFT JOIN Ride   ri ON ri.request_id = rr.request_id
-        LEFT JOIN Driver d  ON d.driver_id   = ri.driver_id
-        LEFT JOIN `User` u  ON u.user_id     = d.user_id
+        LEFT JOIN Ride    ri ON ri.request_id = rr.request_id
+        LEFT JOIN Driver  d  ON d.driver_id   = ri.driver_id
+        LEFT JOIN `User`  u  ON u.user_id     = d.user_id
+        LEFT JOIN Payment p  ON p.ride_id     = ri.ride_id
         WHERE rr.rider_id = %s
         ORDER BY rr.requested_at DESC
     """, (rider_id,))
@@ -297,7 +296,7 @@ def cancel_request(request_id: int, user: dict = Depends(get_current_user)):
 def cancel_ride(ride_id: int, user: dict = Depends(get_current_user)):
     """Cancel an accepted Ride."""
     rows = db.query(
-        "SELECT ri.status, rr.rider_id FROM Ride ri "
+        "SELECT ri.status, rr.rider_id, ri.driver_id FROM Ride ri "
         "JOIN Ride_Request rr ON rr.request_id=ri.request_id "
         "WHERE ri.ride_id=%s", (ride_id,)
     )
@@ -308,11 +307,20 @@ def cancel_ride(ride_id: int, user: dict = Depends(get_current_user)):
         raise HTTPException(403, "Not your ride")
     if rows[0]["status"] not in ("accepted", "driver_en_route"):
         raise HTTPException(400, f"Cannot cancel ride in status: {rows[0]['status']}")
+
     db.execute("UPDATE Ride SET status='cancelled' WHERE ride_id=%s", (ride_id,))
     db.execute(
         "UPDATE Ride_Request SET status='cancelled' "
         "WHERE request_id=(SELECT request_id FROM Ride WHERE ride_id=%s)", (ride_id,)
     )
+    # FIX: free the driver when rider cancels
+    if rows[0]["driver_id"]:
+        db.execute(
+            "UPDATE Driver SET availability='online', "
+            "current_lat=NULL, current_lng=NULL "
+            "WHERE driver_id=%s",
+            (rows[0]["driver_id"],),
+        )
     return {"message": "Ride cancelled"}
 
 
@@ -320,8 +328,6 @@ def cancel_ride(ride_id: int, user: dict = Depends(get_current_user)):
 def rate_driver(ride_id: int, body: RatingBody, user: dict = Depends(get_current_user)):
     if not 1 <= body.score <= 5:
         raise HTTPException(400, "Score must be 1-5")
-    if int(user["sub"]) == body.score:        # dummy guard; real check below
-        pass
     rows = db.query("SELECT ri.driver_id, ri.status FROM Ride ri WHERE ri.ride_id=%s", (ride_id,))
     if not rows or rows[0]["status"] != "completed":
         raise HTTPException(400, "Ride not completed or not found")
@@ -330,7 +336,6 @@ def rate_driver(ride_id: int, body: RatingBody, user: dict = Depends(get_current
     rater_user_id = int(user["sub"])
     if rater_user_id == ratee_user_id:
         raise HTTPException(400, "You cannot rate yourself")
-    # prevent duplicate rating
     dup = db.query(
         "SELECT rating_id FROM Rating WHERE ride_id=%s AND rated_by='rider' AND rater_id=%s",
         (ride_id, rater_user_id)
@@ -346,6 +351,7 @@ def rate_driver(ride_id: int, body: RatingBody, user: dict = Depends(get_current
 
 @router.get("/wallet")
 def get_wallet(user: dict = Depends(get_current_user)):
+    # Rider wallet excluded from this iteration per project spec
     return {"balance": 0.0}
 
 
@@ -359,7 +365,6 @@ def topup_wallet(body: TopUpBody, user: dict = Depends(get_current_user)):
 @router.get("/promos/active")
 def get_active_promos():
     """Public endpoint — returns active promo codes for the booking page."""
-    today = "CURDATE()"
     return db.query("""
         SELECT code, discount_type, discount_value, valid_from, valid_to, usage_limit, times_used
         FROM Promo_Code

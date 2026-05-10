@@ -26,13 +26,12 @@ async function apiFetch<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    // Pydantic validation errors: detail is an array of {loc, msg, type}
     let message: string;
     if (Array.isArray(err.detail)) {
       message = err.detail.map((e: any) => {
-        const field = Array.isArray(e.loc) ? e.loc.filter((l: any) => l !== 'body').join('.') : '';
+        const field = Array.isArray(e.loc) ? e.loc.filter((l: any) => l !== "body").join(".") : "";
         return field ? `${field}: ${e.msg}` : e.msg;
-      }).join('; ');
+      }).join("; ");
     } else {
       message = err.detail ?? err.message ?? "Request failed";
     }
@@ -96,7 +95,6 @@ export const api = {
     getPayouts: () => apiFetch<any[]>("/admin/payouts"),
     approvePayout: (id: number) =>
       apiFetch(`/admin/payouts/${id}/approve`, { method: "PUT" }),
-    // Promo Codes
     getPromos: () => apiFetch<any[]>("/admin/promos"),
     createPromo: (body: object) =>
       apiFetch("/admin/promos", { method: "POST", body: JSON.stringify(body) }),
@@ -105,13 +103,17 @@ export const api = {
     deletePromo: (id: number) =>
       apiFetch(`/admin/promos/${id}`, { method: "DELETE" }),
     getVehicles: (status?: string) => {
-      const q = status ? `?status=${status}` : '';
+      const q = status ? `?status=${status}` : "";
       return apiFetch<any[]>(`/admin/vehicles${q}`);
     },
   },
 
   // ── Rider ─────────────────────────────────────────────────────
   rider: {
+    /**
+     * FIX: payment_method is now included in the request body.
+     * Pass "cash" | "wallet" | "card".
+     */
     requestRide: (body: object) =>
       apiFetch("/rider/rides/request", { method: "POST", body: JSON.stringify(body) }),
     getHistory: () => apiFetch<any[]>("/rider/rides/history"),
@@ -126,22 +128,35 @@ export const api = {
     checkPromo: (code: string) =>
       apiFetch<any>(`/rider/promos/check?code=${code}`),
     cancelRequest: (requestId: number) =>
-      apiFetch(`/rider/requests/${requestId}/cancel`, { method: 'POST' }),
-    getActivePromos: () => apiFetch<any[]>('/rider/promos/active'),
-    getActiveRide:   () => apiFetch<any>('/rider/rides/active'),
+      apiFetch(`/rider/requests/${requestId}/cancel`, { method: "POST" }),
+    getActivePromos: () => apiFetch<any[]>("/rider/promos/active"),
+    /**
+     * FIX: getActiveRide now returns driver_lat/driver_lng so the UI
+     * can show the driver moving on a map in real time.
+     */
+    getActiveRide: () => apiFetch<any>("/rider/rides/active"),
   },
 
   // ── Driver ────────────────────────────────────────────────────
   driver: {
     getPending: () => apiFetch<any[]>("/driver/rides/pending"),
     acceptRequest: (requestId: number) =>
-      apiFetch(`/driver/requests/${requestId}/accept`, { method: 'POST' }),
+      apiFetch(`/driver/requests/${requestId}/accept`, { method: "POST" }),
     acceptRide: (id: number) =>
       apiFetch(`/driver/rides/${id}/accept`, { method: "PUT" }),
     rejectRide: (id: number) =>
       apiFetch(`/driver/rides/${id}/reject`, { method: "PUT" }),
     updateStatus: (id: number, status: string) =>
       apiFetch(`/driver/rides/${id}/status?status=${status}`, { method: "PUT" }),
+    /**
+     * NEW: preferred completion path — driver submits real distance + duration.
+     * Triggers sp_complete_ride so driver wallet is credited.
+     */
+    completeRide: (id: number, body: { distance_km: number; duration_min: number }) =>
+      apiFetch(`/driver/rides/${id}/complete`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
     getEarnings: () => apiFetch<any[]>("/driver/earnings"),
     getWallet: () => apiFetch<{ balance: number }>("/driver/wallet"),
     requestPayout: () => apiFetch("/driver/payouts/request", { method: "POST" }),
@@ -150,10 +165,23 @@ export const api = {
     getProfile: () => apiFetch<any>("/driver/profile"),
     updateLocation: (lat: number, lng: number) =>
       apiFetch("/driver/location", { method: "PUT", body: JSON.stringify({ lat, lng }) }),
+    /** NEW: driver can read back their own stored coordinates */
+    getLocation: () => apiFetch<{ lat: number | null; lng: number | null }>("/driver/location"),
+    /** NEW: driver polls this to see current active ride */
+    getActiveRide: () => apiFetch<any>("/driver/rides/active"),
     registerVehicle: (body: object) =>
       apiFetch("/driver/vehicles", { method: "POST", body: JSON.stringify(body) }),
     getVehicles: () => apiFetch<any[]>("/driver/vehicles"),
   },
+
+  // ── Fare estimate (shared) ─────────────────────────────────────
+  estimateFare: (body: {
+    vehicle_type: string;
+    distance_km: number;
+    duration_min: number;
+    promo_code?: string;
+  }) =>
+    apiFetch<any>("/rides/estimate", { method: "POST", body: JSON.stringify(body) }),
 };
 
 // ── Types ─────────────────────────────────────────────────────────────────────

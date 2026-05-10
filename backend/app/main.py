@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, admin, rider, driver
+from app.routers import auth, admin, rider, driver, rides
 from app import database as db
 
-app = FastAPI(title="RideFlow API", version="2.0.0")
+app = FastAPI(title="RideFlow API", version="2.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,11 +17,13 @@ app.include_router(auth.router,   prefix="/api/v1/auth",   tags=["Auth"])
 app.include_router(admin.router,  prefix="/api/v1/admin",  tags=["Admin"])
 app.include_router(rider.router,  prefix="/api/v1/rider",  tags=["Rider"])
 app.include_router(driver.router, prefix="/api/v1/driver", tags=["Driver"])
+# FIX: rides router was imported but never registered — /estimate was unreachable
+app.include_router(rides.router,  prefix="/api/v1/rides",  tags=["Rides"])
 
 
 @app.get("/")
 def root():
-    return {"message": "RideFlow API v2 is running"}
+    return {"message": "RideFlow API v2.1 is running"}
 
 
 @app.get("/api/v1/rides/fare-estimate")
@@ -32,10 +34,8 @@ def fare_estimate(
     promo_code: str = "",
 ):
     """
-    Fare estimate endpoint used by both rider booking and admin views.
-    Calls sp_calculate_fare stored procedure.
-    SP OUT params order: [4]=base_fare [5]=surge_mult [6]=discount
-                         [7]=final_fare [8]=fare_config_id [9]=error
+    Fare estimate endpoint (GET version — kept for backward compatibility).
+    Prefer POST /api/v1/rides/estimate for new clients.
     """
     if distance_km <= 0:
         raise HTTPException(400, "distance_km must be positive")
@@ -49,7 +49,7 @@ def fare_estimate(
         distance_km,
         duration_min,
         promo_code if promo_code else None,
-        None, None, None, None, None, None,  # OUT params: base_fare, surge_mult, discount, final_fare, fare_config_id, error
+        None, None, None, None, None, None,
     ])
 
     error = args[9]

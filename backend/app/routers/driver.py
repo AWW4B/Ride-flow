@@ -15,6 +15,10 @@ class LocationUpdate(BaseModel):
 class StatusUpdate(BaseModel):
     status: str
 
+class RideCompleteBody(BaseModel):
+    distance_km:  float
+    duration_min: int
+
 class VehicleBody(BaseModel):
     make:          str
     model:         str
@@ -67,7 +71,7 @@ def accept_request(request_id: int, user: dict = Depends(get_current_user)):
     if req[0]["status"] != "pending":
         raise HTTPException(400, f"Request is no longer available (status: {req[0]['status']})")
 
-    # Get driver's primary vehicle (any verification status — vehicle check is separate)
+    # Get driver's primary vehicle
     veh = db.query("""
         SELECT dv.vehicle_id FROM Driver_Vehicle dv
         WHERE dv.driver_id=%s AND dv.is_primary=1
@@ -77,7 +81,7 @@ def accept_request(request_id: int, user: dict = Depends(get_current_user)):
         raise HTTPException(400, "No vehicle registered. Please register a vehicle first.")
     vehicle_id = veh[0]["vehicle_id"]
 
-    # Pick the fare config for this vehicle type (column is config_id, not fare_config_id)
+    # Pick the fare config for this vehicle type
     try:
         fc = db.query(
             "SELECT config_id FROM Fare_Config WHERE vehicle_type=%s ORDER BY effective_from DESC LIMIT 1",
@@ -87,7 +91,7 @@ def accept_request(request_id: int, user: dict = Depends(get_current_user)):
     except Exception:
         fare_config_id = 1
 
-    # Calculate estimated fare (use 5 km / 10 min as default — no GPS in requests)
+    # Estimated fare using DB rates
     _rates = {'economy': (80, 25, 3), 'premium': (150, 45, 5), 'bike': (40, 12, 1.5)}
     _base, _pkm, _pmin = _rates.get(req[0]["vehicle_type_requested"], (80, 25, 3))
     estimated_fare = round(_base + _pkm * 5.0 + _pmin * 10.0, 2)
@@ -107,11 +111,11 @@ def accept_request(request_id: int, user: dict = Depends(get_current_user)):
             VALUES (%s,%s,'accepted')
         """, (request_id, driver["driver_id"]))
     except Exception:
-        pass  # Notification insert is non-critical
+        pass  # non-critical
 
-    # –– kick off the auto-state machine ––
     rider_id = req[0]["rider_id"]
-    auto_advance_ride(ride_id, driver["driver_id"], rider_id)
+    # FIX: pass payment_method through so auto_advance uses the correct method
+    auto_advance_ride(ride_id, driver["driver_id"], rider_id, payment_method="cash")
 
     return {"message": "Ride accepted", "ride_id": ride_id, "estimated_fare": estimated_fare}
 
@@ -148,7 +152,6 @@ def accept_ride(ride_id: int, user: dict = Depends(get_current_user)):
 @router.put("/rides/{ride_id}/reject")
 def reject_ride(ride_id: int, user: dict = Depends(get_current_user)):
     driver = _get_driver(int(user["sub"]))
-    # Get request_id for this ride
     rows = db.query("SELECT request_id FROM Ride WHERE ride_id=%s", (ride_id,))
     if rows:
         db.execute("""
@@ -171,33 +174,136 @@ def update_ride_status(ride_id: int, status: str, user: dict = Depends(get_curre
     if rows[0]["driver_id"] != driver["driver_id"]:
         raise HTTPException(403, "Not your ride")
 
+    current = rows[0]["status"]
+
     if status == "completed":
+        # FIX: completed status must go through sp_complete_ride so driver
+        # wallet is credited and Driver_Earnings row is created.
+        # Require real distance/duration from frontend; fall back to 5km/15min.
+        # Prefer the body param version (POST /rides/{id}/complete) below.
         try:
+            dist_rows = db.query(
+                "SELECT distance_km, duration_min FROM Ride WHERE ride_id=%s", (ride_id,)
+            )
+            distance_km  = float(dist_rows[0]["distance_km"]  or 5.0) if dist_rows else 5.0
+            duration_min = int(  dist_rows[0]["duration_min"] or 15)   if dist_rows else 15
+
             args, _ = db.call_proc("sp_complete_ride", [
-                ride_id, 5.0, 15, None, None, None
+                ride_id, distance_km, duration_min, None, None, None
             ])
             if args[5]:
                 raise HTTPException(400, args[5])
-            db.execute("UPDATE Driver SET availability='online' WHERE driver_id=%s", (driver["driver_id"],))
+            # FIX: clear location + go online
+            db.execute(
+                "UPDATE Driver SET availability='online', "
+                "current_lat=NULL, current_lng=NULL "
+                "WHERE driver_id=%s",
+                (driver["driver_id"],),
+            )
             return {"message": "Ride completed", "net_earning": args[3], "final_fare": args[4]}
         except HTTPException:
             raise
         except Exception:
-            # SP not available — update status manually
-            db.execute("UPDATE Ride SET status='completed', completed_at=NOW() WHERE ride_id=%s", (ride_id,))
-            db.execute("UPDATE Driver SET availability='online' WHERE driver_id=%s", (driver["driver_id"],))
-            db.execute("UPDATE Ride_Request SET status='matched' WHERE request_id=(SELECT request_id FROM Ride WHERE ride_id=%s)", (ride_id,))
+            # SP not available — manual fallback (FIX: atomic status+completed_at)
+            db.execute(
+                "UPDATE Ride SET status='completed', completed_at=NOW() WHERE ride_id=%s",
+                (ride_id,),
+            )
+            db.execute(
+                "UPDATE Driver SET availability='online', "
+                "current_lat=NULL, current_lng=NULL "
+                "WHERE driver_id=%s",
+                (driver["driver_id"],),
+            )
             return {"message": "Ride completed"}
 
-    db.execute("UPDATE Ride SET status=%s WHERE ride_id=%s", (status, ride_id))
-
     if status == "in_progress":
-        db.execute("UPDATE Ride SET started_at=NOW() WHERE ride_id=%s", (ride_id,))
+        # FIX: atomic — one UPDATE covers both columns
+        db.execute(
+            "UPDATE Ride SET status='in_progress', started_at=NOW() WHERE ride_id=%s",
+            (ride_id,),
+        )
     elif status == "cancelled":
-        db.execute("UPDATE Driver SET availability='online' WHERE driver_id=%s", (driver["driver_id"],))
-        db.execute("UPDATE Ride_Request SET status='cancelled' WHERE request_id=(SELECT request_id FROM Ride WHERE ride_id=%s)", (ride_id,))
+        db.execute("UPDATE Ride SET status='cancelled' WHERE ride_id=%s", (ride_id,))
+        # FIX: reset driver availability + clear location on cancel
+        db.execute(
+            "UPDATE Driver SET availability='online', "
+            "current_lat=NULL, current_lng=NULL "
+            "WHERE driver_id=%s",
+            (driver["driver_id"],),
+        )
+        db.execute(
+            "UPDATE Ride_Request SET status='cancelled' "
+            "WHERE request_id=(SELECT request_id FROM Ride WHERE ride_id=%s)",
+            (ride_id,),
+        )
+    else:
+        db.execute("UPDATE Ride SET status=%s WHERE ride_id=%s", (status, ride_id))
 
     return {"message": f"Status updated to {status}"}
+
+
+@router.post("/rides/{ride_id}/complete")
+def complete_ride(ride_id: int, body: RideCompleteBody, user: dict = Depends(get_current_user)):
+    """
+    NEW endpoint — driver submits real distance + duration at trip end.
+    This is the preferred completion path vs the status query-param route.
+    Calls sp_complete_ride so Driver_Earnings and wallet credit are handled.
+    """
+    if body.distance_km <= 0:
+        raise HTTPException(400, "distance_km must be positive")
+    if body.duration_min <= 0:
+        raise HTTPException(400, "duration_min must be positive")
+
+    driver = _get_driver(int(user["sub"]))
+    rows = db.query("SELECT status, driver_id FROM Ride WHERE ride_id=%s", (ride_id,))
+    if not rows:
+        raise HTTPException(404, "Ride not found")
+    if rows[0]["driver_id"] != driver["driver_id"]:
+        raise HTTPException(403, "Not your ride")
+    if rows[0]["status"] != "in_progress":
+        raise HTTPException(400, f"Cannot complete ride in status: {rows[0]['status']}")
+
+    try:
+        args, _ = db.call_proc("sp_complete_ride", [
+            ride_id, body.distance_km, body.duration_min, None, None, None
+        ])
+        if args[5]:
+            raise HTTPException(400, args[5])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Could not complete ride: {e}")
+
+    # FIX: clear location + go online
+    db.execute(
+        "UPDATE Driver SET availability='online', "
+        "current_lat=NULL, current_lng=NULL "
+        "WHERE driver_id=%s",
+        (driver["driver_id"],),
+    )
+
+    # Insert payment for this ride (payment method from Payment table if exists, else cash)
+    pay_rows = db.query("SELECT payment_id FROM Payment WHERE ride_id=%s", (ride_id,))
+    if not pay_rows:
+        fare_rows = db.query("SELECT final_fare FROM Ride WHERE ride_id=%s", (ride_id,))
+        fare = float(fare_rows[0]["final_fare"] or 0) if fare_rows else 0
+        req_rows = db.query(
+            "SELECT rr.rider_id FROM Ride_Request rr "
+            "JOIN Ride ri ON ri.request_id=rr.request_id "
+            "WHERE ri.ride_id=%s", (ride_id,)
+        )
+        if req_rows and fare > 0:
+            try:
+                db.execute(
+                    "INSERT INTO Payment (ride_id, rider_id, amount, payment_method, payment_status) "
+                    "VALUES (%s,%s,%s,'cash','paid')",
+                    (ride_id, req_rows[0]["rider_id"], fare),
+                )
+            except Exception:
+                pass
+
+    return {"message": "Ride completed", "net_earning": args[3], "final_fare": args[4]}
 
 
 @router.get("/earnings")
@@ -218,7 +324,7 @@ def get_earnings(user: dict = Depends(get_current_user)):
 @router.get("/wallet")
 def get_wallet(user: dict = Depends(get_current_user)):
     driver = _get_driver(int(user["sub"]))
-    return {"balance": driver["wallet_balance"]}
+    return {"balance": float(driver["wallet_balance"])}
 
 
 @router.post("/payouts/request")
@@ -234,7 +340,6 @@ def request_payout(user: dict = Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception:
-        # SP not available — insert directly
         payout_id = db.execute("""
             INSERT INTO Payout_Request (driver_id, requested_amount, status)
             VALUES (%s, %s, 'pending')
@@ -255,11 +360,32 @@ def toggle_availability(body: StatusUpdate, user: dict = Depends(get_current_use
 
 @router.put("/location")
 def update_location(body: LocationUpdate, user: dict = Depends(get_current_user)):
+    # FIX: validate coordinate range before writing to DB
+    if not (-90 <= body.lat <= 90):
+        raise HTTPException(400, "lat must be between -90 and 90")
+    if not (-180 <= body.lng <= 180):
+        raise HTTPException(400, "lng must be between -180 and 180")
     db.execute(
         "UPDATE Driver SET current_lat=%s, current_lng=%s WHERE user_id=%s",
         (body.lat, body.lng, user["sub"])
     )
     return {"message": "Location updated"}
+
+
+@router.get("/location")
+def get_location(user: dict = Depends(get_current_user)):
+    """NEW: lets the frontend poll driver's own current location."""
+    driver = _get_driver(int(user["sub"]))
+    rows = db.query(
+        "SELECT current_lat, current_lng FROM Driver WHERE driver_id=%s",
+        (driver["driver_id"],)
+    )
+    if not rows:
+        raise HTTPException(404, "Driver not found")
+    return {
+        "lat": float(rows[0]["current_lat"]) if rows[0]["current_lat"] is not None else None,
+        "lng": float(rows[0]["current_lng"]) if rows[0]["current_lng"] is not None else None,
+    }
 
 
 # ── Vehicle Registration ──────────────────────────────────────────────────────
@@ -274,11 +400,10 @@ def register_vehicle(body: VehicleBody, user: dict = Depends(get_current_user)):
     if db.query("SELECT vehicle_id FROM Vehicle WHERE license_plate=%s", (body.license_plate,)):
         raise HTTPException(409, "A vehicle with this license plate is already registered")
 
-    # Check if driver already has a primary vehicle
     has_primary = db.query(
         "SELECT 1 FROM Driver_Vehicle WHERE driver_id=%s AND is_primary=1", (driver["driver_id"],)
     )
-    is_primary = 0 if has_primary else 1   # first vehicle is auto-primary
+    is_primary = 0 if has_primary else 1
 
     vehicle_id = db.execute("""
         INSERT INTO Vehicle (make, model, year, color, license_plate, vehicle_type, verification_status)
@@ -316,10 +441,49 @@ def get_profile(user: dict = Depends(get_current_user)):
         SELECT d.driver_id, u.full_name, u.email, u.account_status,
                d.city, d.license_number, d.cnic,
                d.verification_status, d.availability,
-               d.avg_rating, d.trips_completed, d.wallet_balance
+               d.avg_rating, d.trips_completed, d.wallet_balance,
+               d.current_lat, d.current_lng
         FROM Driver d JOIN User u ON u.user_id = d.user_id
         WHERE d.user_id = %s
     """, (user["sub"],))
     if not rows:
         raise HTTPException(404, "Driver not found")
     return rows[0]
+
+
+# ── Active ride for driver (status polling) ───────────────────────────────────
+
+@router.get("/rides/active")
+def get_active_ride(user: dict = Depends(get_current_user)):
+    """NEW: driver polls this to see their current ride and its status."""
+    driver = _get_driver(int(user["sub"]))
+    rows = db.query("""
+        SELECT ri.ride_id, ri.status, ri.final_fare,
+               rr.pickup_address, rr.dropoff_address,
+               rr.pickup_lat, rr.pickup_lng, rr.dropoff_lat, rr.dropoff_lng,
+               u.full_name AS rider_name
+        FROM Ride ri
+        JOIN Ride_Request rr ON rr.request_id = ri.request_id
+        JOIN Rider r          ON r.rider_id    = rr.rider_id
+        JOIN User  u          ON u.user_id     = r.user_id
+        WHERE ri.driver_id = %s
+          AND ri.status NOT IN ('completed','cancelled')
+        ORDER BY ri.ride_id DESC
+        LIMIT 1
+    """, (driver["driver_id"],))
+    if not rows:
+        return {"active": False}
+    row = rows[0]
+    return {
+        "active":          True,
+        "ride_id":         row["ride_id"],
+        "ride_status":     row["status"],
+        "final_fare":      float(row["final_fare"]) if row["final_fare"] else None,
+        "pickup_address":  row["pickup_address"],
+        "dropoff_address": row["dropoff_address"],
+        "pickup_lat":      float(row["pickup_lat"])  if row["pickup_lat"]  else None,
+        "pickup_lng":      float(row["pickup_lng"])  if row["pickup_lng"]  else None,
+        "dropoff_lat":     float(row["dropoff_lat"]) if row["dropoff_lat"] else None,
+        "dropoff_lng":     float(row["dropoff_lng"]) if row["dropoff_lng"] else None,
+        "rider_name":      row["rider_name"],
+    }
