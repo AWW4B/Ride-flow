@@ -7,6 +7,7 @@ from app.utils.security import require_role
 router = APIRouter()
 admin_only = Depends(require_role("admin"))
 
+#nothing here
 
 # ── Users ─────────────────────────────────────────────────────────────────────
 
